@@ -8,6 +8,10 @@ const router = express.Router();
 const { query } = require('../config/database');
 const { success, sendError, STATUS_CODES } = require('../utils/response');
 const { referenceValidation } = require('../middleware/validation');
+const { authenticateToken } = require('../middleware/auth');
+
+// Apply authentication to all routes in this router
+router.use(authenticateToken);
 
 // ============================================
 // GET ALL PROVINCES

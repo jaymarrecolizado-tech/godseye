@@ -17,6 +17,7 @@ const envPath = process.env.NODE_ENV === 'production'
 dotenv.config({ path: envPath });
 
 // Import routes
+const authRoutes = require('./routes/auth');
 const projectRoutes = require('./routes/projects');
 const geospatialRoutes = require('./routes/geospatial');
 const referenceRoutes = require('./routes/reference');
@@ -84,6 +85,10 @@ app.get('/api/health', (req, res) => {
 });
 
 // Mount route modules
+// Auth routes (public - no authentication required)
+app.use('/api/auth', authRoutes);
+
+// Protected routes (will add authentication middleware later)
 app.use('/api/projects', projectRoutes);
 app.use('/api', geospatialRoutes);
 app.use('/api', referenceRoutes);
