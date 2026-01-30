@@ -150,6 +150,11 @@ export const projectsApi = {
     return apiClient.get(`/projects/${id}`)
   },
 
+  // Get project status history
+  getProjectHistory: (id) => {
+    return apiClient.get(`/projects/${id}/history`)
+  },
+
   // Create new project
   createProject: (data) => {
     return apiClient.post('/projects', data)

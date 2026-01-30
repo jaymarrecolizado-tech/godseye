@@ -7,7 +7,9 @@ import ProtectedRoute from './components/auth/ProtectedRoute'
 import Dashboard from './pages/Dashboard'
 import MapView from './pages/MapView'
 import ProjectList from './pages/ProjectList'
+import ProjectDetail from './pages/ProjectDetail'
 import ImportPage from './pages/ImportPage'
+import Reports from './pages/Reports'
 import Login from './pages/Login'
 
 /**
@@ -103,7 +105,7 @@ function App() {
               path="/projects/:id" 
               element={
                 <ProtectedRoute>
-                  <ProjectList />
+                  <ProjectDetail />
                 </ProtectedRoute>
               } 
             />
