@@ -1,0 +1,53 @@
+{
+  "name": "project-tracking-management-system",
+  "version": "1.0.0",
+  "description": "A comprehensive full-stack web application for tracking and managing government projects across different regions",
+  "private": true,
+  "author": "Project Tracking Team",
+  "license": "MIT",
+  "homepage": "https://github.com/your-org/project-tracking#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/your-org/project-tracking.git"
+  },
+  "bugs": {
+    "url": "https://github.com/your-org/project-tracking/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  },
+  "scripts": {
+    "install:all": "npm install && cd backend && npm install && cd ../frontend && npm install",
+    "dev": "concurrently \"cd backend && npm run dev\" \"cd frontend && npm run dev\"",
+    "start": "cd backend && npm start",
+    "build": "cd frontend && npm run build",
+    "test": "cd backend && npm test",
+    "db:setup": "cd database && mysql -u root -p < schema.sql",
+    "db:seed": "cd database/seeds && cat *.sql | mysql -u root -p project_tracking",
+    "db:migrate": "cd database/migrations && for %f in (*.sql) do mysql -u root -p project_tracking < %f",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down",
+    "docker:build": "docker-compose up -d --build",
+    "docker:logs": "docker-compose logs -f",
+    "docker:clean": "docker-compose down -v --remove-orphans",
+    "setup:win": "setup.bat",
+    "setup:unix": "./setup.sh",
+    "lint": "cd backend && npm run lint && cd ../frontend && npm run lint",
+    "format": "cd backend && npm run format && cd ../frontend && npm run format"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "keywords": [
+    "project-tracking",
+    "project-management",
+    "government-projects",
+    "geospatial",
+    "maps",
+    "react",
+    "express",
+    "mysql",
+    "full-stack"
+  ]
+}
