@@ -10,6 +10,7 @@ import ProjectList from './pages/ProjectList'
 import ProjectDetail from './pages/ProjectDetail'
 import ImportPage from './pages/ImportPage'
 import Reports from './pages/Reports'
+import AuditLog from './pages/AuditLog'
 import Login from './pages/Login'
 
 /**
@@ -117,13 +118,21 @@ function App() {
                 </ProtectedRoute>
               } 
             />
-            <Route 
-              path="/reports" 
+            <Route
+              path="/reports"
               element={
                 <ProtectedRoute>
-                  <Dashboard showReports={true} />
+                  <Reports />
                 </ProtectedRoute>
-              } 
+              }
+            />
+            <Route
+              path="/audit-logs"
+              element={
+                <ProtectedRoute>
+                  <AuditLog />
+                </ProtectedRoute>
+              }
             />
 
             {/* Catch all - redirect to appropriate page */}

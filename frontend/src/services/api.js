@@ -254,9 +254,18 @@ export const reportsApi = {
     return apiClient.get('/reports/trend/monthly')
   },
 
-  // Export reports
-  exportReport: (format = 'csv') => {
-    return apiClient.get(`/reports/export?format=${format}`, {
+  // Export reports as CSV
+  exportCSV: (params = {}) => {
+    return apiClient.get('/reports/export/csv', {
+      params,
+      responseType: 'blob'
+    })
+  },
+
+  // Export reports as Excel
+  exportExcel: (params = {}) => {
+    return apiClient.get('/reports/export/excel', {
+      params,
       responseType: 'blob'
     })
   }
@@ -265,13 +274,37 @@ export const reportsApi = {
 // Import API
 export { importApi }
 
+// Audit Logs API
+export const auditApi = {
+  // Get audit logs with filters and pagination
+  getAuditLogs: (params = {}) => {
+    return apiClient.get('/audit-logs', { params })
+  },
+
+  // Get audit log statistics
+  getAuditStats: (params = {}) => {
+    return apiClient.get('/audit-logs/stats', { params })
+  },
+
+  // Get distinct entity types for filters
+  getEntityTypes: () => {
+    return apiClient.get('/audit-logs/entity-types')
+  },
+
+  // Get single audit log by ID
+  getAuditLog: (id) => {
+    return apiClient.get(`/audit-logs/${id}`)
+  }
+}
+
 // Export all APIs
 export const api = {
   ...projectsApi,
   ...geospatialApi,
   ...referenceApi,
   ...reportsApi,
-  ...importApi
+  ...importApi,
+  ...auditApi
 }
 
 // Export the axios instance for advanced use cases

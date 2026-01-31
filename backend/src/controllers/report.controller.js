@@ -513,3 +513,218 @@ exports.getPerformance = async (req, res, next) => {
     next(error);
   }
 };
+
+/**
+ * Build export filter conditions
+ * @param {Object} query - Request query parameters
+ * @returns {Object} - Filter conditions and parameters
+ */
+const buildExportFilters = (query) => {
+  let whereClause = 'WHERE 1=1';
+  const params = [];
+  
+  if (query.province_id) {
+    whereClause += ' AND ps.province_id = ?';
+    params.push(parseInt(query.province_id));
+  }
+  
+  if (query.status) {
+    whereClause += ' AND ps.status = ?';
+    params.push(query.status);
+  }
+  
+  if (query.project_type_id) {
+    whereClause += ' AND ps.project_type_id = ?';
+    params.push(parseInt(query.project_type_id));
+  }
+  
+  if (query.date_from) {
+    whereClause += ' AND ps.activation_date >= ?';
+    params.push(query.date_from);
+  }
+  
+  if (query.date_to) {
+    whereClause += ' AND ps.activation_date <= ?';
+    params.push(query.date_to);
+  }
+  
+  return { whereClause, params };
+};
+
+/**
+ * Get export data query
+ * @param {string} whereClause - WHERE clause
+ * @param {Array} params - Query parameters
+ * @returns {Promise<Array>} - Project data for export
+ */
+const getExportData = async (whereClause, params) => {
+  const sql = `
+    SELECT
+      ps.site_code,
+      ps.site_name,
+      p.name AS province,
+      m.name AS municipality,
+      b.name AS barangay,
+      pt.name AS project_type,
+      ps.status,
+      ps.activation_date,
+      ps.latitude,
+      ps.longitude,
+      ps.remarks,
+      ps.created_at,
+      ps.updated_at,
+      u.full_name AS created_by_name
+    FROM project_sites ps
+    JOIN project_types pt ON ps.project_type_id = pt.id
+    JOIN provinces p ON ps.province_id = p.id
+    JOIN municipalities m ON ps.municipality_id = m.id
+    LEFT JOIN barangays b ON ps.barangay_id = b.id
+    LEFT JOIN users u ON ps.created_by = u.id
+    ${whereClause}
+    ORDER BY ps.site_code
+  `;
+  
+  return await query(sql, params);
+};
+
+/**
+ * Convert data to CSV format
+ * @param {Array} data - Array of objects to convert
+ * @returns {string} - CSV string
+ */
+const convertToCSV = (data) => {
+  if (data.length === 0) return '';
+  
+  const headers = [
+    'Site ID',
+    'Site Name',
+    'Province',
+    'Municipality',
+    'Barangay',
+    'Project Type',
+    'Status',
+    'Activation Date',
+    'Latitude',
+    'Longitude',
+    'Remarks',
+    'Created At',
+    'Updated At',
+    'Created By'
+  ];
+  
+  // Escape function for CSV values
+  const escapeCSV = (value) => {
+    if (value === null || value === undefined) return '';
+    const str = String(value);
+    // If value contains comma, quote, or newline, wrap in quotes and escape inner quotes
+    if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+      return `"${str.replace(/"/g, '""')}"`;
+    }
+    return str;
+  };
+  
+  // Build CSV
+  const csvLines = [headers.join(',')];
+  
+  for (const row of data) {
+    const values = [
+      escapeCSV(row.site_code),
+      escapeCSV(row.site_name),
+      escapeCSV(row.province),
+      escapeCSV(row.municipality),
+      escapeCSV(row.barangay),
+      escapeCSV(row.project_type),
+      escapeCSV(row.status),
+      escapeCSV(row.activation_date ? new Date(row.activation_date).toISOString().split('T')[0] : ''),
+      escapeCSV(row.latitude),
+      escapeCSV(row.longitude),
+      escapeCSV(row.remarks),
+      escapeCSV(row.created_at ? new Date(row.created_at).toISOString().split('T')[0] : ''),
+      escapeCSV(row.updated_at ? new Date(row.updated_at).toISOString().split('T')[0] : ''),
+      escapeCSV(row.created_by_name)
+    ];
+    csvLines.push(values.join(','));
+  }
+  
+  return csvLines.join('\n');
+};
+
+/**
+ * Export report data as CSV
+ * @param {Request} req - Express request object
+ * @param {Response} res - Express response object
+ * @param {NextFunction} next - Express next middleware function
+ */
+exports.exportCSV = async (req, res, next) => {
+  try {
+    const { whereClause, params } = buildExportFilters(req.query);
+    const data = await getExportData(whereClause, params);
+    
+    if (data.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No data found for the selected filters'
+      });
+    }
+    
+    const csv = convertToCSV(data);
+    
+    // Generate filename with timestamp
+    const timestamp = new Date().toISOString().split('T')[0];
+    const filename = `project_report_${timestamp}.csv`;
+    
+    // Set headers for file download
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Cache-Control', 'no-cache');
+    
+    // Add BOM for Excel compatibility with UTF-8
+    const bom = '\uFEFF';
+    res.send(bom + csv);
+    
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Export report data as Excel (XLSX)
+ * For now, exports as CSV with Excel MIME type for compatibility
+ * @param {Request} req - Express request object
+ * @param {Response} res - Express response object
+ * @param {NextFunction} next - Express next middleware function
+ */
+exports.exportExcel = async (req, res, next) => {
+  try {
+    const { whereClause, params } = buildExportFilters(req.query);
+    const data = await getExportData(whereClause, params);
+    
+    if (data.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No data found for the selected filters'
+      });
+    }
+    
+    const csv = convertToCSV(data);
+    
+    // Generate filename with timestamp
+    const timestamp = new Date().toISOString().split('T')[0];
+    const filename = `project_report_${timestamp}.xlsx`;
+    
+    // Set headers for Excel file download (using CSV content with Excel MIME type as fallback)
+    // Browsers will open this with Excel by default
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    
+    // Send as CSV data - Excel can open this
+    // Add BOM for proper UTF-8 handling in Excel
+    const bom = '\uFEFF';
+    res.send(bom + csv);
+    
+  } catch (error) {
+    next(error);
+  }
+};

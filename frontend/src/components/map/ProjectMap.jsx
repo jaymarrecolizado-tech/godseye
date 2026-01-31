@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { MapContainer, TileLayer, useMap, LayersControl, LayerGroup } from 'react-leaflet'
+import MarkerClusterGroup from 'react-leaflet-cluster'
 import { useMapStore } from '@/stores/mapStore'
 import MapMarker from './MapMarker'
 import 'leaflet/dist/leaflet.css'
@@ -17,6 +18,60 @@ let DefaultIcon = L.icon({
 })
 
 L.Marker.prototype.options.icon = DefaultIcon
+
+// Cluster icon colors by project type
+const clusterColors = {
+  'wifi': '#22c55e',
+  'pnpki': '#ef4444',
+  'iidb': '#3b82f6',
+  'elgu': '#eab308',
+  'default': '#6b7280'
+}
+
+// Create custom cluster icon
+const createClusterCustomIcon = function(cluster) {
+  const childCount = cluster.getChildCount()
+  const markers = cluster.getAllChildMarkers()
+  
+  // Determine dominant project type in cluster
+  const typeCounts = {}
+  markers.forEach(marker => {
+    const type = marker.options.projectType?.toLowerCase().replace(/[^a-z]/g, '') || 'default'
+    typeCounts[type] = (typeCounts[type] || 0) + 1
+  })
+  
+  // Find most common type
+  const dominantType = Object.entries(typeCounts)
+    .sort((a, b) => b[1] - a[1])[0]?.[0] || 'default'
+  const color = clusterColors[dominantType] || clusterColors['default']
+  
+  // Size based on count
+  let size = 40
+  if (childCount < 10) size = 40
+  else if (childCount < 100) size = 50
+  else size = 60
+  
+  return L.divIcon({
+    html: `
+      <div style="
+        background-color: ${color};
+        width: ${size}px;
+        height: ${size}px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: bold;
+        font-size: ${childCount < 100 ? '14px' : '12px'};
+        border: 3px solid white;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+      ">${childCount}</div>
+    `,
+    className: 'marker-cluster-custom',
+    iconSize: L.point(size, size)
+  })
+}
 
 // Map bounds controller component
 const MapBoundsController = ({ markers }) => {
@@ -124,14 +179,22 @@ const ProjectMap = ({ filters = {} }) => {
               name={`${type} (${typeMarkers.length})`}
             >
               <LayerGroup>
-                {typeMarkers.map((marker) => (
-                  <MapMarker
-                    key={marker.id}
-                    project={marker}
-                    isSelected={selectedMarker?.id === marker.id}
-                    onClick={() => selectMarker(marker)}
-                  />
-                ))}
+                <MarkerClusterGroup
+                  chunkedLoading
+                  spiderfyDistanceMultiplier={2}
+                  showCoverageOnHover={false}
+                  maxClusterRadius={80}
+                  iconCreateFunction={createClusterCustomIcon}
+                >
+                  {typeMarkers.map((marker) => (
+                    <MapMarker
+                      key={marker.id}
+                      project={marker}
+                      isSelected={selectedMarker?.id === marker.id}
+                      onClick={() => selectMarker(marker)}
+                    />
+                  ))}
+                </MarkerClusterGroup>
               </LayerGroup>
             </LayersControl.Overlay>
           ))}

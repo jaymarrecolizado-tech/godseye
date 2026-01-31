@@ -105,9 +105,10 @@ const MapMarker = ({ project, isSelected, onClick }) => {
   }
 
   return (
-    <Marker 
-      position={position} 
+    <Marker
+      position={position}
       icon={icon}
+      projectType={project.project_type}
       eventHandlers={{
         click: onClick
       }}

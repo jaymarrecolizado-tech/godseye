@@ -1,13 +1,13 @@
-import { useEffect, useState, useMemo } from 'react'
-import { 
+import { useEffect, useState, useMemo, useRef } from 'react'
+import {
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend,
   BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line,
   Area, AreaChart
 } from 'recharts'
-import { 
+import {
   FileText, Download, Calendar, MapPin, Activity,
   CheckCircle2, Clock, FolderOpen, TrendingUp, Users,
-  Filter, ChevronDown, Loader2
+  Filter, ChevronDown, Loader2, FileSpreadsheet
 } from 'lucide-react'
 import { reportsApi, referenceApi } from '@/services/api'
 
@@ -38,7 +38,17 @@ const Reports = () => {
   const [activeTab, setActiveTab] = useState('overview')
   const [dateRange, setDateRange] = useState({ from: '', to: '' })
   const [selectedProvince, setSelectedProvince] = useState('')
+  const [selectedStatus, setSelectedStatus] = useState('')
+  const [selectedProjectType, setSelectedProjectType] = useState('')
   const [provinces, setProvinces] = useState([])
+  const [projectTypes, setProjectTypes] = useState([])
+  
+  // Export states
+  const [exportFormat, setExportFormat] = useState('csv')
+  const [exportLoading, setExportLoading] = useState(false)
+  const [exportError, setExportError] = useState(null)
+  const exportDropdownRef = useRef(null)
+  const [showExportDropdown, setShowExportDropdown] = useState(false)
   
   // Report data states
   const [summary, setSummary] = useState(null)
@@ -48,17 +58,21 @@ const Reports = () => {
   const [projectTypeData, setProjectTypeData] = useState([])
   const [performanceData, setPerformanceData] = useState(null)
 
-  // Fetch provinces for filter
+  // Fetch provinces and project types for filters
   useEffect(() => {
-    const fetchProvinces = async () => {
+    const fetchReferenceData = async () => {
       try {
-        const response = await referenceApi.getProvinces()
-        setProvinces(response.data || [])
+        const [provincesRes, typesRes] = await Promise.all([
+          referenceApi.getProvinces(),
+          referenceApi.getProjectTypes()
+        ])
+        setProvinces(provincesRes.data || [])
+        setProjectTypes(typesRes.data || [])
       } catch (err) {
-        console.error('Failed to fetch provinces:', err)
+        console.error('Failed to fetch reference data:', err)
       }
     }
-    fetchProvinces()
+    fetchReferenceData()
   }, [])
 
   // Fetch all report data
@@ -143,14 +157,74 @@ const Reports = () => {
     }))
   }, [timelineData])
 
-  const handleExport = () => {
-    // Placeholder for export functionality
-    alert('Export functionality will be implemented soon!')
+  const handleExport = async () => {
+    setExportLoading(true)
+    setExportError(null)
+    
+    try {
+      // Build export params based on current filters
+      const params = {}
+      if (dateRange.from) params.date_from = dateRange.from
+      if (dateRange.to) params.date_to = dateRange.to
+      if (selectedProvince) params.province_id = selectedProvince
+      if (selectedStatus) params.status = selectedStatus
+      if (selectedProjectType) params.project_type_id = selectedProjectType
+      
+      // Call appropriate export API
+      const response = exportFormat === 'csv'
+        ? await reportsApi.exportCSV(params)
+        : await reportsApi.exportExcel(params)
+      
+      // Create blob from response
+      const blob = new Blob([response], {
+        type: exportFormat === 'csv'
+          ? 'text/csv;charset=utf-8'
+          : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      })
+      
+      // Create download link
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      
+      // Generate filename with timestamp
+      const timestamp = new Date().toISOString().split('T')[0]
+      const extension = exportFormat === 'csv' ? 'csv' : 'xlsx'
+      link.download = `project_report_${timestamp}.${extension}`
+      
+      // Trigger download
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      
+      // Clean up
+      window.URL.revokeObjectURL(url)
+      
+      // Close dropdown
+      setShowExportDropdown(false)
+      
+    } catch (err) {
+      console.error('Export failed:', err)
+      setExportError(err.message || 'Failed to export report. Please try again.')
+    } finally {
+      setExportLoading(false)
+    }
   }
 
   const handleDateRangeChange = (field, value) => {
     setDateRange(prev => ({ ...prev, [field]: value }))
   }
+  
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (exportDropdownRef.current && !exportDropdownRef.current.contains(event.target)) {
+        setShowExportDropdown(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
 
   const StatCard = ({ title, value, icon: Icon, color, trend }) => (
     <div className="bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
@@ -229,18 +303,98 @@ const Reports = () => {
             Comprehensive insights and performance metrics
           </p>
         </div>
-        <button
-          onClick={handleExport}
-          className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-        >
-          <Download className="w-4 h-4 mr-2" />
-          Export Report
-        </button>
+        
+        {/* Export Dropdown */}
+        <div className="relative" ref={exportDropdownRef}>
+          <button
+            onClick={() => setShowExportDropdown(!showExportDropdown)}
+            disabled={exportLoading}
+            className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {exportLoading ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Exporting...
+              </>
+            ) : (
+              <>
+                <Download className="w-4 h-4 mr-2" />
+                Export Report
+                <ChevronDown className="w-4 h-4 ml-2" />
+              </>
+            )}
+          </button>
+          
+          {showExportDropdown && (
+            <div className="absolute right-0 mt-2 w-72 bg-white rounded-lg shadow-lg border border-gray-200 z-50">
+              <div className="p-4 space-y-4">
+                <h3 className="text-sm font-semibold text-gray-900">Export Options</h3>
+                
+                {/* Format Selection */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-2">
+                    Export Format
+                  </label>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setExportFormat('csv')}
+                      className={`flex-1 px-3 py-2 text-sm rounded-lg border transition-colors flex items-center justify-center gap-2 ${
+                        exportFormat === 'csv'
+                          ? 'bg-blue-50 border-blue-500 text-blue-700'
+                          : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                      }`}
+                    >
+                      <FileText className="w-4 h-4" />
+                      CSV
+                    </button>
+                    <button
+                      onClick={() => setExportFormat('excel')}
+                      className={`flex-1 px-3 py-2 text-sm rounded-lg border transition-colors flex items-center justify-center gap-2 ${
+                        exportFormat === 'excel'
+                          ? 'bg-blue-50 border-blue-500 text-blue-700'
+                          : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                      }`}
+                    >
+                      <FileSpreadsheet className="w-4 h-4" />
+                      Excel
+                    </button>
+                  </div>
+                </div>
+                
+                {/* Export Button */}
+                <button
+                  onClick={handleExport}
+                  disabled={exportLoading}
+                  className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium flex items-center justify-center gap-2"
+                >
+                  {exportLoading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Exporting...
+                    </>
+                  ) : (
+                    <>
+                      <Download className="w-4 h-4" />
+                      Download {exportFormat.toUpperCase()}
+                    </>
+                  )}
+                </button>
+                
+                {exportError && (
+                  <div className="text-xs text-red-600 bg-red-50 p-2 rounded">
+                    {exportError}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Filters */}
       <div className="bg-white rounded-xl p-4 border border-gray-200 shadow-sm">
         <div className="flex flex-wrap items-center gap-4">
+          {/* Date Range */}
           <div className="flex items-center space-x-2">
             <Calendar className="w-4 h-4 text-gray-500" />
             <span className="text-sm font-medium text-gray-700">Date Range:</span>
@@ -261,9 +415,10 @@ const Reports = () => {
             placeholder="To"
           />
           
+          {/* Province Filter */}
           <div className="flex items-center space-x-2 ml-4">
             <MapPin className="w-4 h-4 text-gray-500" />
-            <span className="text-sm font-medium text-gray-700">Location:</span>
+            <span className="text-sm font-medium text-gray-700">Province:</span>
           </div>
           <select
             value={selectedProvince}
@@ -274,6 +429,42 @@ const Reports = () => {
             {provinces.map(province => (
               <option key={province.id} value={province.id}>
                 {province.name}
+              </option>
+            ))}
+          </select>
+          
+          {/* Status Filter */}
+          <div className="flex items-center space-x-2">
+            <Activity className="w-4 h-4 text-gray-500" />
+            <span className="text-sm font-medium text-gray-700">Status:</span>
+          </div>
+          <select
+            value={selectedStatus}
+            onChange={(e) => setSelectedStatus(e.target.value)}
+            className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          >
+            <option value="">All Status</option>
+            <option value="Pending">Pending</option>
+            <option value="In Progress">In Progress</option>
+            <option value="Done">Done</option>
+            <option value="Cancelled">Cancelled</option>
+            <option value="On Hold">On Hold</option>
+          </select>
+          
+          {/* Project Type Filter */}
+          <div className="flex items-center space-x-2">
+            <FolderOpen className="w-4 h-4 text-gray-500" />
+            <span className="text-sm font-medium text-gray-700">Type:</span>
+          </div>
+          <select
+            value={selectedProjectType}
+            onChange={(e) => setSelectedProjectType(e.target.value)}
+            className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          >
+            <option value="">All Types</option>
+            {projectTypes.map(type => (
+              <option key={type.id} value={type.id}>
+                {type.name}
               </option>
             ))}
           </select>

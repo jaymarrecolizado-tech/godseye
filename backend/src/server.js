@@ -23,6 +23,10 @@ const geospatialRoutes = require('./routes/geospatial');
 const referenceRoutes = require('./routes/reference');
 const reportRoutes = require('./routes/reports');
 const importRoutes = require('./routes/import');
+const auditRoutes = require('./routes/audit');
+
+// Import middleware
+const { authenticateToken } = require('./middleware/auth');
 
 // Initialize Express app
 const app = express();
@@ -88,12 +92,13 @@ app.get('/api/health', (req, res) => {
 // Auth routes (public - no authentication required)
 app.use('/api/auth', authRoutes);
 
-// Protected routes (will add authentication middleware later)
-app.use('/api/projects', projectRoutes);
-app.use('/api', geospatialRoutes);
-app.use('/api', referenceRoutes);
-app.use('/api/reports', reportRoutes);
-app.use('/api/import', importRoutes);
+// Protected routes (authentication required)
+app.use('/api/projects', authenticateToken, projectRoutes);
+app.use('/api', authenticateToken, geospatialRoutes);
+app.use('/api', authenticateToken, referenceRoutes);
+app.use('/api/reports', authenticateToken, reportRoutes);
+app.use('/api/import', authenticateToken, importRoutes);
+app.use('/api/audit-logs', authenticateToken, auditRoutes);
 
 // ============================================
 // WEBSOCKET HANDLING

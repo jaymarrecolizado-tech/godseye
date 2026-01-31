@@ -1,10 +1,11 @@
 import { NavLink } from 'react-router-dom'
-import { 
-  LayoutDashboard, 
-  Map, 
-  List, 
-  Upload, 
-  BarChart3, 
+import {
+  LayoutDashboard,
+  Map,
+  List,
+  Upload,
+  BarChart3,
+  ClipboardList,
   X,
   Database
 } from 'lucide-react'
@@ -16,6 +17,7 @@ const navigation = [
   { name: 'Projects', href: '/projects', icon: List },
   { name: 'Import CSV', href: '/import', icon: Upload },
   { name: 'Reports', href: '/reports', icon: BarChart3 },
+  { name: 'Audit Logs', href: '/audit-logs', icon: ClipboardList },
 ]
 
 const Sidebar = ({ isOpen, onClose }) => {

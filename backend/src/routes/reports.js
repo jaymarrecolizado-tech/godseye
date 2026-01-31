@@ -42,4 +42,10 @@ router.get('/by-project-type', reportValidation.dateRange, reportController.getB
 // ============================================
 router.get('/performance', reportController.getPerformance);
 
+// ============================================
+// EXPORT ENDPOINTS
+// ============================================
+router.get('/export/csv', reportValidation.dateRange, reportController.exportCSV);
+router.get('/export/excel', reportValidation.dateRange, reportController.exportExcel);
+
 module.exports = router;
