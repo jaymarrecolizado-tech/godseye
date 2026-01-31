@@ -451,6 +451,9 @@ exports.getByProjectType = async (req, res, next) => {
     }
     
     // Get detailed breakdown by project type
+    // Fix: Handle empty filter clause properly for LEFT JOIN
+    const joinFilter = filterClause ? filterClause.replace(/WHERE /, 'AND ').replace(/ps\./g, 'ps.') : '';
+    
     const sql = `
       SELECT 
         pt.id,
@@ -458,7 +461,7 @@ exports.getByProjectType = async (req, res, next) => {
         pt.code_prefix,
         pt.color_code,
         pt.description,
-        COUNT(*) as total_projects,
+        COUNT(ps.id) as total_projects,
         SUM(CASE WHEN ps.status = 'Done' THEN 1 ELSE 0 END) as completed,
         SUM(CASE WHEN ps.status = 'In Progress' THEN 1 ELSE 0 END) as in_progress,
         SUM(CASE WHEN ps.status = 'Pending' THEN 1 ELSE 0 END) as pending,
@@ -467,9 +470,9 @@ exports.getByProjectType = async (req, res, next) => {
         COUNT(DISTINCT ps.municipality_id) as municipalities_count,
         MIN(ps.activation_date) as earliest_activation,
         MAX(ps.activation_date) as latest_activation,
-        ROUND(SUM(CASE WHEN ps.status = 'Done' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 2) as completion_rate
+        ROUND(SUM(CASE WHEN ps.status = 'Done' THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(ps.id), 0), 2) as completion_rate
       FROM project_types pt
-      LEFT JOIN project_sites ps ON pt.id = ps.project_type_id ${filterClause.replace('ps.', 'AND ps.')}
+      LEFT JOIN project_sites ps ON pt.id = ps.project_type_id ${joinFilter}
       GROUP BY pt.id, pt.name, pt.code_prefix, pt.color_code, pt.description
       ORDER BY total_projects DESC
     `;

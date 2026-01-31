@@ -1,0 +1,58 @@
+{
+  "timestamp": "2026-01-31T12:52:19.195Z",
+  "summary": {
+    "total": 41,
+    "passed": 35,
+    "failed": 0,
+    "warnings": 6,
+    "success_rate": "100.00"
+  },
+  "details": {
+    "passed": [
+      "Date Range: Date From only",
+      "Date Range: Date To only",
+      "Date Range: Date range",
+      "Date Range: Future date",
+      "Date Range: Past date",
+      "Province filtering: ID 2",
+      "Province filter with grouping",
+      "Municipality filtering: ID 4",
+      "Municipality filter with grouping",
+      "District filtering: ID 3",
+      "District filter with grouping",
+      "Single status filtering: Pending",
+      "Multi-status filtering: Pending,In Progress,Done",
+      "Status filter with grouping",
+      "Project type filtering: ID 4",
+      "Project type filter with grouping",
+      "Combined filters",
+      "Grouping by: none",
+      "Grouping by: province",
+      "Grouping by: municipality",
+      "Grouping by: district",
+      "Grouping by: project_type",
+      "Grouping by: status",
+      "Grouping by: activation_month",
+      "CSV export with filters",
+      "Excel export with filters",
+      "Endpoint: Summary",
+      "Endpoint: By Status",
+      "Endpoint: By Location",
+      "Endpoint: Timeline",
+      "Endpoint: By Project Type",
+      "Endpoint: Performance",
+      "Edge case: Non-existent province",
+      "Edge case: Invalid status",
+      "Edge case: Large limit"
+    ],
+    "failed": [],
+    "warnings": [
+      "PDF export (summary): Format may be incorrect",
+      "PDF export (status): Format may be incorrect",
+      "PDF export (location): Format may be incorrect",
+      "PDF export (projects): Format may be incorrect",
+      "PDF export (custom): Format may be incorrect",
+      "Edge case: Invalid date format - One or more fields failed validation"
+    ]
+  }
+}

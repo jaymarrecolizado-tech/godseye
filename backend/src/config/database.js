@@ -67,7 +67,9 @@ const query = async (sql, params) => {
   let connection;
   try {
     connection = await pool.getConnection();
-    const [results] = await connection.execute(sql, params);
+    // Use query() instead of execute() to avoid prepared statement limitations
+    // This allows LIMIT and other clauses to work with dynamic values
+    const [results] = await connection.query(sql, params);
     return results;
   } catch (error) {
     console.error('Database query error:', error.message);
