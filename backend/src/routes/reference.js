@@ -30,7 +30,6 @@ router.get('/provinces', async (req, res, next) => {
           p.id,
           p.name,
           p.region_code,
-          p.centroid,
           COUNT(ps.id) as project_count,
           SUM(CASE WHEN ps.status = 'Done' THEN 1 ELSE 0 END) as completed_count,
           SUM(CASE WHEN ps.status = 'In Progress' THEN 1 ELSE 0 END) as in_progress_count,
@@ -38,7 +37,7 @@ router.get('/provinces', async (req, res, next) => {
         FROM provinces p
         LEFT JOIN project_sites ps ON p.id = ps.province_id
         ${region_code ? 'WHERE p.region_code = ?' : ''}
-        GROUP BY p.id, p.name, p.region_code, p.centroid
+        GROUP BY p.id, p.name, p.region_code
         ORDER BY p.name
       `;
       if (region_code) params.push(region_code);
@@ -48,8 +47,7 @@ router.get('/provinces', async (req, res, next) => {
         SELECT 
           id,
           name,
-          region_code,
-          centroid
+          region_code
         FROM provinces
         ${region_code ? 'WHERE region_code = ?' : ''}
         ORDER BY name
@@ -80,14 +78,13 @@ router.get('/provinces/:id', async (req, res, next) => {
         p.id,
         p.name,
         p.region_code,
-        p.centroid,
         COUNT(ps.id) as project_count,
         COUNT(DISTINCT m.id) as municipality_count
       FROM provinces p
       LEFT JOIN project_sites ps ON p.id = ps.province_id
       LEFT JOIN municipalities m ON p.id = m.province_id
       WHERE p.id = ?
-      GROUP BY p.id, p.name, p.region_code, p.centroid
+      GROUP BY p.id, p.name, p.region_code
     `;
     
     const [province] = await query(sql, [id]);
@@ -127,7 +124,6 @@ router.get('/municipalities', referenceValidation.municipalities, async (req, re
           m.municipality_code,
           m.district_id,
           d.name as district_name,
-          m.centroid,
           COUNT(ps.id) as project_count,
           SUM(CASE WHEN ps.status = 'Done' THEN 1 ELSE 0 END) as completed_count,
           SUM(CASE WHEN ps.status = 'In Progress' THEN 1 ELSE 0 END) as in_progress_count,
@@ -137,7 +133,7 @@ router.get('/municipalities', referenceValidation.municipalities, async (req, re
         LEFT JOIN project_sites ps ON m.id = ps.municipality_id
         WHERE m.province_id = ?
         ${district_id ? 'AND m.district_id = ?' : ''}
-        GROUP BY m.id, m.name, m.municipality_code, m.district_id, d.name, m.centroid
+        GROUP BY m.id, m.name, m.municipality_code, m.district_id, d.name
         ORDER BY m.name
       `;
       if (district_id) params.push(district_id);
@@ -148,8 +144,7 @@ router.get('/municipalities', referenceValidation.municipalities, async (req, re
           m.name,
           m.municipality_code,
           m.district_id,
-          d.name as district_name,
-          m.centroid
+          d.name as district_name
         FROM municipalities m
         LEFT JOIN districts d ON m.district_id = d.id
         WHERE m.province_id = ?
@@ -186,7 +181,6 @@ router.get('/barangays', referenceValidation.barangays, async (req, res, next) =
           b.id,
           b.name,
           b.barangay_code,
-          b.centroid,
           COUNT(ps.id) as project_count,
           SUM(CASE WHEN ps.status = 'Done' THEN 1 ELSE 0 END) as completed_count,
           SUM(CASE WHEN ps.status = 'In Progress' THEN 1 ELSE 0 END) as in_progress_count,
@@ -194,7 +188,7 @@ router.get('/barangays', referenceValidation.barangays, async (req, res, next) =
         FROM barangays b
         LEFT JOIN project_sites ps ON b.id = ps.barangay_id
         WHERE b.municipality_id = ?
-        GROUP BY b.id, b.name, b.barangay_code, b.centroid
+        GROUP BY b.id, b.name, b.barangay_code
         ORDER BY b.name
       `;
     } else {
@@ -202,8 +196,7 @@ router.get('/barangays', referenceValidation.barangays, async (req, res, next) =
         SELECT 
           id,
           name,
-          barangay_code,
-          centroid
+          barangay_code
         FROM barangays
         WHERE municipality_id = ?
         ORDER BY name
@@ -273,9 +266,7 @@ router.get('/project-types', async (req, res, next) => {
           pt.id,
           pt.name,
           pt.code_prefix,
-          pt.description,
           pt.color_code,
-          pt.icon_url,
           pt.is_active,
           COUNT(ps.id) as project_count,
           SUM(CASE WHEN ps.status = 'Done' THEN 1 ELSE 0 END) as completed_count,
@@ -285,7 +276,7 @@ router.get('/project-types', async (req, res, next) => {
         FROM project_types pt
         LEFT JOIN project_sites ps ON pt.id = ps.project_type_id
         ${include_inactive !== 'true' ? 'WHERE pt.is_active = TRUE' : ''}
-        GROUP BY pt.id, pt.name, pt.code_prefix, pt.description, pt.color_code, pt.icon_url, pt.is_active
+        GROUP BY pt.id, pt.name, pt.code_prefix, pt.color_code, pt.is_active
         ORDER BY pt.name
       `;
     } else {
@@ -294,9 +285,7 @@ router.get('/project-types', async (req, res, next) => {
           id,
           name,
           code_prefix,
-          description,
           color_code,
-          icon_url,
           is_active
         FROM project_types
         ${include_inactive !== 'true' ? 'WHERE is_active = TRUE' : ''}
@@ -327,15 +316,13 @@ router.get('/project-types/:id', async (req, res, next) => {
         pt.id,
         pt.name,
         pt.code_prefix,
-        pt.description,
         pt.color_code,
-        pt.icon_url,
         pt.is_active,
         COUNT(ps.id) as project_count
       FROM project_types pt
       LEFT JOIN project_sites ps ON pt.id = ps.project_type_id
       WHERE pt.id = ?
-      GROUP BY pt.id, pt.name, pt.code_prefix, pt.description, pt.color_code, pt.icon_url, pt.is_active
+      GROUP BY pt.id, pt.name, pt.code_prefix, pt.color_code, pt.is_active
     `;
     
     const [projectType] = await query(sql, [id]);

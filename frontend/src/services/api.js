@@ -239,44 +239,34 @@ export const referenceApi = {
 
 // Reports API
 export const reportsApi = {
-  // Get dashboard statistics
+  // Get dashboard summary
   getStats: () => {
-    return apiClient.get('/reports/stats')
+    return apiClient.get('/reports/summary')
   },
 
   // Get summary by project type
-  getSummaryByType: () => {
-    return apiClient.get('/reports/summary/type')
+  getSummaryByType: (params = {}) => {
+    return apiClient.get('/reports/by-project-type', { params })
   },
 
   // Get summary by status
-  getSummaryByStatus: () => {
-    return apiClient.get('/reports/summary/status')
+  getSummaryByStatus: (params = {}) => {
+    return apiClient.get('/reports/by-status', { params })
   },
 
-  // Get summary by province
-  getSummaryByProvince: () => {
-    return apiClient.get('/reports/summary/province')
+  // Get summary by location (province)
+  getSummaryByProvince: (params = {}) => {
+    return apiClient.get('/reports/by-location', { params })
   },
 
-  // Get monthly trend
-  getMonthlyTrend: () => {
-    return apiClient.get('/reports/trend/monthly')
+  // Get timeline data (monthly trends)
+  getMonthlyTrend: (params = {}) => {
+    return apiClient.get('/reports/timeline', { params })
   },
 
-  // Get performance metrics (placeholder - returns mock data)
+  // Get performance metrics
   getPerformance: () => {
-    return Promise.resolve({
-      data: {
-        success: true,
-        data: {
-          completionRate: 85,
-          avgCompletionTime: 45,
-          onTimeDelivery: 78,
-          qualityScore: 92
-        }
-      }
-    })
+    return apiClient.get('/reports/performance')
   },
 
   // Export reports as CSV

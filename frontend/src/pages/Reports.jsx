@@ -842,8 +842,8 @@ const Reports = () => {
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis type="number" />
                   <YAxis dataKey="project_type" type="category" width={80} />
-                  <Tooltip 
-                    formatter={(value) => [`${value.toFixed(1)} days`, 'Avg. Time']}
+                  <Tooltip
+                    formatter={(value) => [`${Number(value).toFixed(1)} days`, 'Avg. Time']}
                   />
                   <Bar 
                     dataKey="avg_days_to_complete" 

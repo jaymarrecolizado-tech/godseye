@@ -665,9 +665,9 @@ const generateStatusReportPDF = async (data) => {
             <td class="numeric">
               <div style="display: flex; align-items: center; gap: 8px;">
                 <div class="progress-bar" style="width: 60px;">
-                  <div class="progress-fill" style="width: ${row.completion_percentage || 0}%; background: ${BRAND_COLORS.success}"></div>
+                  <div class="progress-fill" style="width: ${parseFloat(row.completion_percentage) || 0}%; background: ${BRAND_COLORS.success}"></div>
                 </div>
-                <span>${(row.completion_percentage || 0).toFixed(1)}%</span>
+                <span>${(parseFloat(row.completion_percentage) || 0).toFixed(1)}%</span>
               </div>
             </td>
           </tr>
