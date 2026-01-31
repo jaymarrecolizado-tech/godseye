@@ -5,6 +5,7 @@
 
 const { query } = require('../config/database');
 const { success, STATUS_CODES } = require('../utils/response');
+const pdfGenerator = require('../services/pdfGenerator');
 
 /**
  * Get dashboard summary statistics
@@ -681,6 +682,353 @@ exports.exportCSV = async (req, res, next) => {
     // Add BOM for Excel compatibility with UTF-8
     const bom = '\uFEFF';
     res.send(bom + csv);
+    
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Export summary report as PDF
+ * @param {Request} req - Express request object
+ * @param {Response} res - Express response object
+ * @param {NextFunction} next - Express next middleware function
+ */
+exports.exportSummaryPDF = async (req, res, next) => {
+  try {
+    // Get summary data using existing function
+    const { date_from, date_to } = req.query;
+    
+    // Build date filter
+    let dateFilter = '';
+    const dateParams = [];
+    
+    if (date_from) {
+      dateFilter += ' AND ps.activation_date >= ?';
+      dateParams.push(date_from);
+    }
+    if (date_to) {
+      dateFilter += ' AND ps.activation_date <= ?';
+      dateParams.push(date_to);
+    }
+    
+    // Get overall statistics
+    const summarySql = `
+      SELECT
+        COUNT(*) as total_projects,
+        SUM(CASE WHEN ps.status = 'Pending' THEN 1 ELSE 0 END) as pending,
+        SUM(CASE WHEN ps.status = 'In Progress' THEN 1 ELSE 0 END) as in_progress,
+        SUM(CASE WHEN ps.status = 'Done' THEN 1 ELSE 0 END) as done,
+        SUM(CASE WHEN ps.status = 'Cancelled' THEN 1 ELSE 0 END) as cancelled,
+        SUM(CASE WHEN ps.status = 'On Hold' THEN 1 ELSE 0 END) as on_hold,
+        COUNT(DISTINCT ps.province_id) as provinces_with_projects,
+        COUNT(DISTINCT ps.municipality_id) as municipalities_with_projects,
+        COUNT(DISTINCT ps.project_type_id) as active_project_types
+      FROM project_sites ps
+      WHERE 1=1 ${dateFilter}
+    `;
+    
+    const [summary] = await query(summarySql, dateParams);
+    summary.completion_rate = summary.total_projects > 0
+      ? Math.round((summary.done / summary.total_projects) * 100)
+      : 0;
+    
+    // Get monthly trends
+    const trendsSql = `
+      SELECT
+        DATE_FORMAT(created_at, '%Y-%m') as month,
+        COUNT(*) as count,
+        SUM(CASE WHEN status = 'Done' THEN 1 ELSE 0 END) as completed
+      FROM project_sites
+      WHERE created_at >= DATE_SUB(NOW(), INTERVAL 12 MONTH)
+      GROUP BY DATE_FORMAT(created_at, '%Y-%m')
+      ORDER BY month
+    `;
+    
+    const trends = await query(trendsSql);
+    
+    // Get recent activity
+    const recentSql = `
+      SELECT
+        ps.site_code,
+        ps.site_name,
+        ps.status,
+        pt.name as project_type,
+        pt.color_code,
+        p.name as province,
+        ps.updated_at
+      FROM project_sites ps
+      JOIN project_types pt ON ps.project_type_id = pt.id
+      JOIN provinces p ON ps.province_id = p.id
+      ORDER BY ps.updated_at DESC
+      LIMIT 10
+    `;
+    
+    const recentActivity = await query(recentSql);
+    
+    const reportData = {
+      data: {
+        summary,
+        trends,
+        recent_activity: recentActivity
+      }
+    };
+    
+    const pdfBuffer = await pdfGenerator.generateSummaryReportPDF(reportData);
+    
+    const timestamp = new Date().toISOString().split('T')[0];
+    const filename = `summary_report_${timestamp}.pdf`;
+    
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', pdfBuffer.length);
+    res.send(pdfBuffer);
+    
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Export status report as PDF
+ * @param {Request} req - Express request object
+ * @param {Response} res - Express response object
+ * @param {NextFunction} next - Express next middleware function
+ */
+exports.exportStatusPDF = async (req, res, next) => {
+  try {
+    const { date_from, date_to, group_by = 'project_type' } = req.query;
+    
+    // Build date filter
+    let dateFilter = '';
+    const dateParams = [];
+    
+    if (date_from) {
+      dateFilter += ' AND ps.activation_date >= ?';
+      dateParams.push(date_from);
+    }
+    if (date_to) {
+      dateFilter += ' AND ps.activation_date <= ?';
+      dateParams.push(date_to);
+    }
+    
+    let sql;
+    
+    if (group_by === 'project_type') {
+      sql = `
+        SELECT
+          pt.id as project_type_id,
+          pt.name as project_type,
+          pt.color_code,
+          COUNT(*) as total,
+          SUM(CASE WHEN ps.status = 'Pending' THEN 1 ELSE 0 END) as pending,
+          SUM(CASE WHEN ps.status = 'In Progress' THEN 1 ELSE 0 END) as in_progress,
+          SUM(CASE WHEN ps.status = 'Done' THEN 1 ELSE 0 END) as done,
+          SUM(CASE WHEN ps.status = 'Cancelled' THEN 1 ELSE 0 END) as cancelled,
+          SUM(CASE WHEN ps.status = 'On Hold' THEN 1 ELSE 0 END) as on_hold,
+          ROUND(SUM(CASE WHEN ps.status = 'Done' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 2) as completion_percentage
+        FROM project_sites ps
+        JOIN project_types pt ON ps.project_type_id = pt.id
+        WHERE 1=1 ${dateFilter}
+        GROUP BY pt.id, pt.name, pt.color_code
+        ORDER BY total DESC
+      `;
+    } else if (group_by === 'province') {
+      sql = `
+        SELECT
+          p.id as province_id,
+          p.name as province,
+          COUNT(*) as total,
+          SUM(CASE WHEN ps.status = 'Pending' THEN 1 ELSE 0 END) as pending,
+          SUM(CASE WHEN ps.status = 'In Progress' THEN 1 ELSE 0 END) as in_progress,
+          SUM(CASE WHEN ps.status = 'Done' THEN 1 ELSE 0 END) as done,
+          SUM(CASE WHEN ps.status = 'Cancelled' THEN 1 ELSE 0 END) as cancelled,
+          SUM(CASE WHEN ps.status = 'On Hold' THEN 1 ELSE 0 END) as on_hold,
+          ROUND(SUM(CASE WHEN ps.status = 'Done' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 2) as completion_percentage
+        FROM project_sites ps
+        JOIN provinces p ON ps.province_id = p.id
+        WHERE 1=1 ${dateFilter}
+        GROUP BY p.id, p.name
+        ORDER BY total DESC
+      `;
+    } else {
+      sql = `
+        SELECT
+          status,
+          COUNT(*) as count,
+          ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM project_sites WHERE 1=1 ${dateFilter}), 2) as percentage
+        FROM project_sites ps
+        WHERE 1=1 ${dateFilter}
+        GROUP BY status
+        ORDER BY count DESC
+      `;
+    }
+    
+    const data = await query(sql, [...dateParams, ...dateParams]);
+    const total = data.reduce((sum, row) => sum + (row.total || row.count), 0);
+    
+    const reportData = {
+      data: {
+        breakdown: data,
+        total,
+        group_by
+      }
+    };
+    
+    const pdfBuffer = await pdfGenerator.generateStatusReportPDF(reportData);
+    
+    const timestamp = new Date().toISOString().split('T')[0];
+    const filename = `status_report_${timestamp}.pdf`;
+    
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', pdfBuffer.length);
+    res.send(pdfBuffer);
+    
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Export location report as PDF
+ * @param {Request} req - Express request object
+ * @param {Response} res - Express response object
+ * @param {NextFunction} next - Express next middleware function
+ */
+exports.exportLocationPDF = async (req, res, next) => {
+  try {
+    const { date_from, date_to, level = 'province' } = req.query;
+    
+    // Build date filter
+    let dateFilter = '';
+    const dateParams = [];
+    
+    if (date_from) {
+      dateFilter += ' AND ps.activation_date >= ?';
+      dateParams.push(date_from);
+    }
+    if (date_to) {
+      dateFilter += ' AND ps.activation_date <= ?';
+      dateParams.push(date_to);
+    }
+    
+    let sql;
+    
+    if (level === 'municipality') {
+      sql = `
+        SELECT
+          p.name as province,
+          m.name as municipality,
+          COUNT(*) as total_projects,
+          SUM(CASE WHEN ps.status = 'Done' THEN 1 ELSE 0 END) as completed,
+          SUM(CASE WHEN ps.status = 'In Progress' THEN 1 ELSE 0 END) as in_progress,
+          SUM(CASE WHEN ps.status = 'Pending' THEN 1 ELSE 0 END) as pending,
+          COUNT(DISTINCT ps.project_type_id) as project_types
+        FROM project_sites ps
+        JOIN provinces p ON ps.province_id = p.id
+        JOIN municipalities m ON ps.municipality_id = m.id
+        WHERE 1=1 ${dateFilter}
+        GROUP BY p.name, m.name
+        ORDER BY total_projects DESC
+      `;
+    } else {
+      sql = `
+        SELECT
+          p.id as province_id,
+          p.name as province,
+          p.region_code,
+          COUNT(*) as total_projects,
+          SUM(CASE WHEN ps.status = 'Done' THEN 1 ELSE 0 END) as completed,
+          SUM(CASE WHEN ps.status = 'In Progress' THEN 1 ELSE 0 END) as in_progress,
+          SUM(CASE WHEN ps.status = 'Pending' THEN 1 ELSE 0 END) as pending,
+          SUM(CASE WHEN ps.status = 'Cancelled' THEN 1 ELSE 0 END) as cancelled,
+          COUNT(DISTINCT ps.municipality_id) as municipalities_count,
+          COUNT(DISTINCT ps.project_type_id) as project_types
+        FROM project_sites ps
+        JOIN provinces p ON ps.province_id = p.id
+        WHERE 1=1 ${dateFilter}
+        GROUP BY p.id, p.name, p.region_code
+        ORDER BY total_projects DESC
+      `;
+    }
+    
+    const locations = await query(sql, dateParams);
+    
+    // Get summary statistics
+    const summarySql = `
+      SELECT
+        COUNT(DISTINCT ps.province_id) as provinces_with_projects,
+        COUNT(DISTINCT ps.municipality_id) as municipalities_with_projects,
+        COUNT(DISTINCT ps.barangay_id) as barangays_with_projects
+      FROM project_sites ps
+      WHERE 1=1 ${dateFilter}
+    `;
+    
+    const [summary] = await query(summarySql, dateParams);
+    
+    const reportData = {
+      data: {
+        locations,
+        summary
+      },
+      level
+    };
+    
+    const pdfBuffer = await pdfGenerator.generateLocationReportPDF(reportData);
+    
+    const timestamp = new Date().toISOString().split('T')[0];
+    const filename = `location_report_${timestamp}.pdf`;
+    
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', pdfBuffer.length);
+    res.send(pdfBuffer);
+    
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Export projects list as PDF
+ * @param {Request} req - Express request object
+ * @param {Response} res - Express response object
+ * @param {NextFunction} next - Express next middleware function
+ */
+exports.exportProjectsPDF = async (req, res, next) => {
+  try {
+    const { whereClause, params } = buildExportFilters(req.query);
+    const projects = await getExportData(whereClause, params);
+    
+    if (projects.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No data found for the selected filters'
+      });
+    }
+    
+    // Build filters object for display
+    const filters = {};
+    if (req.query.province_id) filters['Province'] = `ID: ${req.query.province_id}`;
+    if (req.query.status) filters['Status'] = req.query.status;
+    if (req.query.project_type_id) filters['Project Type'] = `ID: ${req.query.project_type_id}`;
+    if (req.query.date_from) filters['From Date'] = req.query.date_from;
+    if (req.query.date_to) filters['To Date'] = req.query.date_to;
+    
+    const pdfBuffer = await pdfGenerator.generateProjectsPDF(projects, {
+      title: 'Project Export',
+      subtitle: `Filtered export containing ${projects.length} projects`,
+      filters
+    });
+    
+    const timestamp = new Date().toISOString().split('T')[0];
+    const filename = `projects_export_${timestamp}.pdf`;
+    
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', pdfBuffer.length);
+    res.send(pdfBuffer);
     
   } catch (error) {
     next(error);

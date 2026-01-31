@@ -24,6 +24,8 @@ const referenceRoutes = require('./routes/reference');
 const reportRoutes = require('./routes/reports');
 const importRoutes = require('./routes/import');
 const auditRoutes = require('./routes/audit');
+const userRoutes = require('./routes/users');
+const notificationRoutes = require('./routes/notifications');
 
 // Import middleware
 const { authenticateToken } = require('./middleware/auth');
@@ -95,10 +97,12 @@ app.use('/api/auth', authRoutes);
 // Protected routes (authentication required)
 app.use('/api/projects', authenticateToken, projectRoutes);
 app.use('/api', authenticateToken, geospatialRoutes);
-app.use('/api', authenticateToken, referenceRoutes);
+app.use('/api/reference', authenticateToken, referenceRoutes);
 app.use('/api/reports', authenticateToken, reportRoutes);
 app.use('/api/import', authenticateToken, importRoutes);
 app.use('/api/audit-logs', authenticateToken, auditRoutes);
+app.use('/api/users', authenticateToken, userRoutes);
+app.use('/api/notifications', authenticateToken, notificationRoutes);
 
 // ============================================
 // WEBSOCKET HANDLING
@@ -119,10 +123,26 @@ io.on('connection', (socket) => {
     console.log(`Socket ${socket.id} subscribed to import ${importId}`);
   });
 
+  // Subscribe to user-specific notifications
+  socket.on('subscribe:notifications', (userId) => {
+    if (userId) {
+      socket.join(`user:${userId}`);
+      console.log(`Socket ${socket.id} subscribed to notifications for user ${userId}`);
+    }
+  });
+
   // Unsubscribe from project updates
   socket.on('unsubscribe:projects', () => {
     socket.leave('projects');
     console.log(`Socket ${socket.id} unsubscribed from project updates`);
+  });
+
+  // Unsubscribe from user notifications
+  socket.on('unsubscribe:notifications', (userId) => {
+    if (userId) {
+      socket.leave(`user:${userId}`);
+      console.log(`Socket ${socket.id} unsubscribed from notifications for user ${userId}`);
+    }
   });
 
   // Handle disconnection

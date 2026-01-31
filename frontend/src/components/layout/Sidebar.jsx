@@ -7,9 +7,12 @@ import {
   BarChart3,
   ClipboardList,
   X,
-  Database
+  Database,
+  Users,
+  Shield
 } from 'lucide-react'
 import PropTypes from 'prop-types'
+import { useAuthStore } from '@/stores/authStore'
 
 const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
@@ -20,7 +23,20 @@ const navigation = [
   { name: 'Audit Logs', href: '/audit-logs', icon: ClipboardList },
 ]
 
+const adminNavigation = [
+  { name: 'User Management', href: '/users', icon: Users, adminOnly: true },
+]
+
 const Sidebar = ({ isOpen, onClose }) => {
+  const { user } = useAuthStore()
+  const isAdmin = user?.role === 'Admin'
+
+  // Combine navigation items based on user role
+  const allNavigation = [
+    ...navigation,
+    ...(isAdmin ? adminNavigation : [])
+  ]
+
   return (
     <>
       {/* Desktop Sidebar */}
@@ -32,9 +48,9 @@ const Sidebar = ({ isOpen, onClose }) => {
             <p className="text-xs text-gray-500">Management System</p>
           </div>
         </div>
-        
+
         <nav className="flex-1 px-4 py-6 space-y-1 overflow-y-auto">
-          {navigation.map((item) => {
+          {allNavigation.map((item) => {
             const Icon = item.icon
             return (
               <NavLink
@@ -89,7 +105,7 @@ const Sidebar = ({ isOpen, onClose }) => {
         </div>
         
         <nav className="px-4 py-6 space-y-1">
-          {navigation.map((item) => {
+          {allNavigation.map((item) => {
             const Icon = item.icon
             return (
               <NavLink

@@ -100,13 +100,43 @@ export const deleteImport = async (importId) => {
   return response.data
 }
 
+/**
+ * Download import template CSV
+ * @returns {Promise<Blob>} Template CSV file
+ */
+export const downloadTemplate = async () => {
+  const response = await apiClient.get('/import/template', {
+    responseType: 'blob'
+  })
+  return response.data
+}
+
+/**
+ * Validate CSV file without importing
+ * @param {File} file - CSV file to validate
+ * @returns {Promise} Validation result
+ */
+export const validateCSV = async (file) => {
+  const formData = new FormData()
+  formData.append('file', file)
+
+  const response = await apiClient.post('/import/validate', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data'
+    }
+  })
+  return response.data
+}
+
 // Export all methods
 export const importApi = {
   uploadCSV,
   getImportStatus,
   downloadErrorReport,
   getImportHistory,
-  deleteImport
+  deleteImport,
+  downloadTemplate,
+  validateCSV
 }
 
 export default importApi

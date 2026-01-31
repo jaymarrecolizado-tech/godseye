@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/stores/authStore'
+import { useNotificationStore } from '@/stores/notificationStore'
+import { NotificationBell } from '@/components/notifications'
 import { 
   Menu, 
-  Bell, 
   User, 
   ChevronDown, 
   Settings, 
@@ -26,16 +27,16 @@ import PropTypes from 'prop-types'
 const Header = ({ onMenuClick }) => {
   const navigate = useNavigate()
   const { user, logout } = useAuthStore()
-  const [notifications] = useState([
-    { id: 1, message: 'New project added: Free-WIFI Site 101', time: '2 min ago', read: false },
-    { id: 2, message: 'Project DICT-MNL-001 status updated', time: '1 hour ago', read: false },
-    { id: 3, message: 'CSV import completed successfully', time: '3 hours ago', read: true },
-  ])
-  const [showNotifications, setShowNotifications] = useState(false)
+  const { clearNotifications } = useNotificationStore()
   const [showProfile, setShowProfile] = useState(false)
   const [isLoggingOut, setIsLoggingOut] = useState(false)
 
-  const unreadCount = notifications.filter(n => !n.read).length
+  // Clear notifications on logout
+  useEffect(() => {
+    return () => {
+      // Cleanup if component unmounts
+    }
+  }, [])
 
   // Get user display name
   const displayName = user?.fullName || user?.username || 'User'
@@ -62,6 +63,8 @@ const Header = ({ onMenuClick }) => {
     setShowProfile(false)
     
     try {
+      // Clear notifications before logout
+      clearNotifications()
       await logout()
       // Redirect to login page
       navigate('/login', { replace: true })
@@ -74,7 +77,6 @@ const Header = ({ onMenuClick }) => {
 
   // Close dropdowns when clicking outside
   const handleDropdownClose = () => {
-    setShowNotifications(false)
     setShowProfile(false)
   }
 
@@ -96,62 +98,13 @@ const Header = ({ onMenuClick }) => {
       {/* Right side */}
       <div className="flex items-center space-x-4">
         {/* Notifications */}
-        <div className="relative">
-          <button
-            onClick={() => {
-              setShowNotifications(!showNotifications)
-              setShowProfile(false)
-            }}
-            className="relative p-2 rounded-full text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-colors"
-          >
-            <Bell className="w-5 h-5" />
-            {unreadCount > 0 && (
-              <span className="absolute top-1 right-1 w-4 h-4 bg-red-500 text-white text-xs rounded-full flex items-center justify-center">
-                {unreadCount}
-              </span>
-            )}
-          </button>
-
-          {/* Notifications Dropdown */}
-          {showNotifications && (
-            <>
-              <div 
-                className="fixed inset-0 z-30"
-                onClick={handleDropdownClose}
-              />
-              <div className="absolute right-0 mt-2 w-80 bg-white rounded-lg shadow-lg border border-gray-200 py-2 z-40">
-                <div className="px-4 py-2 border-b border-gray-100">
-                  <h3 className="text-sm font-semibold text-gray-900">Notifications</h3>
-                </div>
-                <div className="max-h-64 overflow-y-auto">
-                  {notifications.map((notification) => (
-                    <div
-                      key={notification.id}
-                      className={`px-4 py-3 hover:bg-gray-50 cursor-pointer border-b border-gray-50 last:border-0 ${
-                        !notification.read ? 'bg-blue-50' : ''
-                      }`}
-                    >
-                      <p className="text-sm text-gray-800">{notification.message}</p>
-                      <p className="text-xs text-gray-500 mt-1">{notification.time}</p>
-                    </div>
-                  ))}
-                </div>
-                <div className="px-4 py-2 border-t border-gray-100">
-                  <button className="text-sm text-blue-600 hover:text-blue-700 font-medium">
-                    View all notifications
-                  </button>
-                </div>
-              </div>
-            </>
-          )}
-        </div>
+        <NotificationBell />
 
         {/* User Profile */}
         <div className="relative">
           <button
             onClick={() => {
               setShowProfile(!showProfile)
-              setShowNotifications(false)
             }}
             disabled={isLoggingOut}
             className="flex items-center space-x-3 p-2 rounded-lg hover:bg-gray-100 transition-colors disabled:opacity-50"

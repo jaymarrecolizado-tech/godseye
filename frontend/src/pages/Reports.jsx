@@ -7,7 +7,7 @@ import {
 import {
   FileText, Download, Calendar, MapPin, Activity,
   CheckCircle2, Clock, FolderOpen, TrendingUp, Users,
-  Filter, ChevronDown, Loader2, FileSpreadsheet
+  Filter, ChevronDown, Loader2, FileSpreadsheet, FileIcon
 } from 'lucide-react'
 import { reportsApi, referenceApi } from '@/services/api'
 
@@ -49,6 +49,9 @@ const Reports = () => {
   const [exportError, setExportError] = useState(null)
   const exportDropdownRef = useRef(null)
   const [showExportDropdown, setShowExportDropdown] = useState(false)
+  const [pdfReportType, setPdfReportType] = useState('summary')
+  const [showPDFDropdown, setShowPDFDropdown] = useState(false)
+  const pdfDropdownRef = useRef(null)
   
   // Report data states
   const [summary, setSummary] = useState(null)
@@ -211,6 +214,69 @@ const Reports = () => {
     }
   }
 
+  const handlePDFExport = async (reportType) => {
+    setExportLoading(true)
+    setExportError(null)
+    
+    try {
+      // Build export params based on current filters
+      const params = {}
+      if (dateRange.from) params.date_from = dateRange.from
+      if (dateRange.to) params.date_to = dateRange.to
+      if (selectedProvince) params.province_id = selectedProvince
+      if (selectedStatus) params.status = selectedStatus
+      if (selectedProjectType) params.project_type_id = selectedProjectType
+      
+      // Call appropriate PDF export API based on report type
+      let response
+      switch (reportType) {
+        case 'summary':
+          response = await reportsApi.exportSummaryPDF(params)
+          break
+        case 'status':
+          response = await reportsApi.exportStatusPDF(params)
+          break
+        case 'location':
+          response = await reportsApi.exportLocationPDF(params)
+          break
+        case 'projects':
+          response = await reportsApi.exportProjectsPDF(params)
+          break
+        default:
+          response = await reportsApi.exportSummaryPDF(params)
+      }
+      
+      // Create blob from response
+      const blob = new Blob([response], { type: 'application/pdf' })
+      
+      // Create download link
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      
+      // Generate filename with timestamp
+      const timestamp = new Date().toISOString().split('T')[0]
+      link.download = `${reportType}_report_${timestamp}.pdf`
+      
+      // Trigger download
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      
+      // Clean up
+      window.URL.revokeObjectURL(url)
+      
+      // Close dropdown
+      setShowPDFDropdown(false)
+      
+    } catch (err) {
+      console.error('PDF Export failed:', err)
+      setExportError(err.message || 'Failed to export PDF report. Please try again.')
+    } finally {
+      setExportLoading(false)
+    }
+  }
+
   const handleDateRangeChange = (field, value) => {
     setDateRange(prev => ({ ...prev, [field]: value }))
   }
@@ -220,6 +286,9 @@ const Reports = () => {
     const handleClickOutside = (event) => {
       if (exportDropdownRef.current && !exportDropdownRef.current.contains(event.target)) {
         setShowExportDropdown(false)
+      }
+      if (pdfDropdownRef.current && !pdfDropdownRef.current.contains(event.target)) {
+        setShowPDFDropdown(false)
       }
     }
     document.addEventListener('mousedown', handleClickOutside)
@@ -303,6 +372,79 @@ const Reports = () => {
             Comprehensive insights and performance metrics
           </p>
         </div>
+        
+        <div className="flex items-center gap-3">
+          {/* PDF Export Dropdown */}
+          <div className="relative" ref={pdfDropdownRef}>
+            <button
+              onClick={() => setShowPDFDropdown(!showPDFDropdown)}
+              disabled={exportLoading}
+              className="inline-flex items-center px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {exportLoading && showPDFDropdown ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Generating PDF...
+                </>
+              ) : (
+                <>
+                  <FileIcon className="w-4 h-4 mr-2" />
+                  Export PDF
+                  <ChevronDown className="w-4 h-4 ml-2" />
+                </>
+              )}
+            </button>
+            
+            {showPDFDropdown && (
+              <div className="absolute right-0 mt-2 w-64 bg-white rounded-lg shadow-lg border border-gray-200 z-50">
+                <div className="p-3 space-y-2">
+                  <h3 className="text-sm font-semibold text-gray-900 mb-2">Select Report Type</h3>
+                  
+                  <button
+                    onClick={() => handlePDFExport('summary')}
+                    disabled={exportLoading}
+                    className="w-full px-3 py-2 text-left text-sm rounded-lg hover:bg-gray-50 transition-colors flex items-center gap-2"
+                  >
+                    <Activity className="w-4 h-4 text-blue-600" />
+                    Dashboard Summary
+                  </button>
+                  
+                  <button
+                    onClick={() => handlePDFExport('status')}
+                    disabled={exportLoading}
+                    className="w-full px-3 py-2 text-left text-sm rounded-lg hover:bg-gray-50 transition-colors flex items-center gap-2"
+                  >
+                    <CheckCircle2 className="w-4 h-4 text-green-600" />
+                    Status Breakdown
+                  </button>
+                  
+                  <button
+                    onClick={() => handlePDFExport('location')}
+                    disabled={exportLoading}
+                    className="w-full px-3 py-2 text-left text-sm rounded-lg hover:bg-gray-50 transition-colors flex items-center gap-2"
+                  >
+                    <MapPin className="w-4 h-4 text-purple-600" />
+                    Location Report
+                  </button>
+                  
+                  <button
+                    onClick={() => handlePDFExport('projects')}
+                    disabled={exportLoading}
+                    className="w-full px-3 py-2 text-left text-sm rounded-lg hover:bg-gray-50 transition-colors flex items-center gap-2"
+                  >
+                    <FolderOpen className="w-4 h-4 text-orange-600" />
+                    Project List
+                  </button>
+                  
+                  {exportError && (
+                    <div className="text-xs text-red-600 bg-red-50 p-2 rounded mt-2">
+                      {exportError}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         
         {/* Export Dropdown */}
         <div className="relative" ref={exportDropdownRef}>
@@ -388,6 +530,7 @@ const Reports = () => {
               </div>
             </div>
           )}
+        </div>
         </div>
       </div>
 

@@ -6,6 +6,7 @@
 const fs = require('fs');
 const csv = require('csv-parser');
 const { query, transaction, getConnection } = require('../config/database');
+const notificationService = require('./notificationService');
 
 // Required CSV columns mapping
 const COLUMN_MAPPING = {
@@ -415,10 +416,6 @@ async function processRow(row, rowNumber, options = {}) {
           }
         }
 
-        // Add location update
-        updateFields.push('location = ST_GeomFromText(?, 4326)');
-        params.push(`POINT(${updateData.longitude} ${updateData.latitude})`);
-
         params.push(existing.id);
 
         await query(
@@ -441,10 +438,10 @@ async function processRow(row, rowNumber, options = {}) {
       INSERT INTO project_sites (
         site_code, project_type_id, site_name,
         barangay_id, municipality_id, province_id, district_id,
-        latitude, longitude, location,
+        latitude, longitude,
         activation_date, status,
         created_by, updated_by
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ST_GeomFromText(?, 4326), ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     const result = await query(insertSql, [
@@ -457,7 +454,6 @@ async function processRow(row, rowNumber, options = {}) {
       fkLookup.district_id,
       parseFloat(row['Latitude']),
       parseFloat(row['Longitude']),
-      `POINT(${parseFloat(row['Longitude'])} ${parseFloat(row['Latitude'])})`,
       row['Date of Activation'],
       row['Status'].trim(),
       userId,
@@ -614,6 +610,32 @@ async function processCSVFile(filePath, importId, options = {}) {
         status: finalStatus,
         results
       });
+    }
+
+    // Send notification to the user who initiated the import
+    if (userId) {
+      try {
+        // Get import details for notification
+        const [importRecord] = await query(
+          'SELECT original_filename FROM csv_imports WHERE id = ?',
+          [importId]
+        );
+
+        if (importRecord) {
+          notificationService.notifyImportCompleted({
+            id: importId,
+            original_filename: importRecord.original_filename,
+            status: finalStatus,
+            success_count: results.successCount,
+            error_count: results.errorCount,
+            total_rows: results.totalRows
+          }, userId).catch(error => {
+            console.error('Error sending import completion notification:', error);
+          });
+        }
+      } catch (error) {
+        console.error('Error getting import details for notification:', error);
+      }
     }
 
     return results;

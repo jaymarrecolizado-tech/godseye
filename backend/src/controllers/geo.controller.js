@@ -141,24 +141,28 @@ exports.getNearbyProjects = async (req, res, next) => {
     const { lat, lng, radius = 10, page, limit } = req.query;
     
     const { limit: limitNum, offset } = buildPagination(page, limit);
-    const radiusMeters = parseFloat(radius) * 1000; // Convert km to meters
+    const radiusKm = parseFloat(radius);
     
-    // Use ST_Distance_Sphere for accurate distance calculation
+    // Use Haversine formula for distance calculation
+    // since we don't have a spatial 'location' column
     const countSql = `
       SELECT COUNT(*) as total
       FROM project_sites ps
-      WHERE ST_Distance_Sphere(
-        ps.location,
-        ST_GeomFromText('POINT(? ?)', 4326)
+      WHERE (
+        6371 * acos(
+          cos(radians(?)) * cos(radians(ps.latitude)) *
+          cos(radians(ps.longitude) - radians(?)) +
+          sin(radians(?)) * sin(radians(ps.latitude))
+        )
       ) <= ?
     `;
     
-    const [countResult] = await query(countSql, [lng, lat, radiusMeters]);
+    const [countResult] = await query(countSql, [lat, lng, lat, radiusKm]);
     const total = countResult.total;
     
-    // Get nearby projects with distance
+    // Get nearby projects with calculated distance
     const projectsSql = `
-      SELECT 
+      SELECT
         ps.id,
         ps.site_code,
         ps.site_name,
@@ -174,24 +178,24 @@ exports.getNearbyProjects = async (req, res, next) => {
         p.name as province,
         m.name as municipality,
         b.name as barangay,
-        ROUND(ST_Distance_Sphere(
-          ps.location,
-          ST_GeomFromText('POINT(? ?)', 4326)
-        ) / 1000, 2) as distance_km
+        ROUND(
+          6371 * acos(
+            cos(radians(?)) * cos(radians(ps.latitude)) *
+            cos(radians(ps.longitude) - radians(?)) +
+            sin(radians(?)) * sin(radians(ps.latitude))
+          ), 2
+        ) as distance_km
       FROM project_sites ps
       JOIN project_types pt ON ps.project_type_id = pt.id
       JOIN provinces p ON ps.province_id = p.id
       JOIN municipalities m ON ps.municipality_id = m.id
       LEFT JOIN barangays b ON ps.barangay_id = b.id
-      WHERE ST_Distance_Sphere(
-        ps.location,
-        ST_GeomFromText('POINT(? ?)', 4326)
-      ) <= ?
+      HAVING distance_km <= ?
       ORDER BY distance_km ASC
       LIMIT ? OFFSET ?
     `;
     
-    const projects = await query(projectsSql, [lng, lat, lng, lat, radiusMeters, limitNum, offset]);
+    const projects = await query(projectsSql, [lat, lng, lat, radiusKm, limitNum, offset]);
     
     res.json(paginated(
       projects,
@@ -213,19 +217,12 @@ exports.getProjectsInBoundingBox = async (req, res, next) => {
   try {
     const { north, south, east, west, filters = {} } = req.body;
     
-    // Build polygon from bounding box (west, south, east, north corners)
-    // Note: Polygon must be closed (first and last point must match)
-    const polygonWKT = `POLYGON((
-      ${west} ${south},
-      ${east} ${south},
-      ${east} ${north},
-      ${west} ${north},
-      ${west} ${south}
-    ))`;
-    
     // Build additional filters
-    const conditions = ['MBRContains(ST_GeomFromText(?, 4326), ps.location)'];
-    const params = [polygonWKT];
+    const conditions = [
+      'ps.latitude BETWEEN ? AND ?',
+      'ps.longitude BETWEEN ? AND ?'
+    ];
+    const params = [south, north, west, east];
     
     if (filters.status) {
       conditions.push('ps.status = ?');
@@ -249,9 +246,9 @@ exports.getProjectsInBoundingBox = async (req, res, next) => {
     
     const whereClause = `WHERE ${conditions.join(' AND ')}`;
     
-    // Get projects within bounding box
+    // Get projects within bounding box using latitude/longitude comparison
     const sql = `
-      SELECT 
+      SELECT
         ps.id,
         ps.site_code,
         ps.site_name,

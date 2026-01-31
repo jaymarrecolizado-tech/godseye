@@ -11,6 +11,7 @@ import ProjectDetail from './pages/ProjectDetail'
 import ImportPage from './pages/ImportPage'
 import Reports from './pages/Reports'
 import AuditLog from './pages/AuditLog'
+import UserManagement from './pages/UserManagement'
 import Login from './pages/Login'
 
 /**
@@ -131,6 +132,14 @@ function App() {
               element={
                 <ProtectedRoute>
                   <AuditLog />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/users"
+              element={
+                <ProtectedRoute>
+                  <UserManagement />
                 </ProtectedRoute>
               }
             />

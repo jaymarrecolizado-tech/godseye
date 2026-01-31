@@ -1,6 +1,7 @@
 /**
  * Audit Log Controller
  * Business logic for audit log operations
+ * Updated to match actual database schema
  */
 
 const { query, buildPagination } = require('../config/database');
@@ -17,9 +18,9 @@ exports.getAuditLogs = async (req, res, next) => {
     const {
       page,
       limit,
-      entity_type,
+      entity,
       action,
-      user_id,
+      user,
       date_from,
       date_to
     } = req.query;
@@ -30,21 +31,25 @@ exports.getAuditLogs = async (req, res, next) => {
     const conditions = [];
     const params = [];
 
-    if (entity_type) {
-      conditions.push('al.entity_type = ?');
-      params.push(entity_type);
+    // Filter by table_name (mapped from 'entity' query param)
+    if (entity) {
+      conditions.push('al.table_name = ?');
+      params.push(entity);
     }
 
+    // Filter by action
     if (action) {
       conditions.push('al.action = ?');
       params.push(action);
     }
 
-    if (user_id) {
+    // Filter by user_id (mapped from 'user' query param)
+    if (user) {
       conditions.push('al.user_id = ?');
-      params.push(user_id);
+      params.push(user);
     }
 
+    // Filter by date range
     if (date_from) {
       conditions.push('al.created_at >= ?');
       params.push(date_from);
@@ -69,42 +74,43 @@ exports.getAuditLogs = async (req, res, next) => {
     const [countResult] = await query(countSql, params);
     const total = countResult.total;
 
-    // Get audit logs with user details
-    const logsSql = `
+    // Get audit logs with user info
+    let logsSql = `
       SELECT
         al.id,
-        al.entity_type,
-        al.entity_id,
+        al.table_name as entity,
+        al.record_id as entity_id,
         al.action,
         al.old_values,
         al.new_values,
         al.user_id,
-        al.created_at,
-        u.full_name as user_name,
-        u.email as user_email
+        u.username as user_username,
+        u.full_name as user_full_name,
+        al.ip_address,
+        al.created_at as timestamp
       FROM audit_logs al
       LEFT JOIN users u ON al.user_id = u.id
       ${whereClause}
       ORDER BY al.created_at DESC
-      LIMIT ? OFFSET ?
+      LIMIT ${parseInt(limitNum)} OFFSET ${parseInt(offset)}
     `;
 
-    const logs = await query(logsSql, [...params, limitNum, offset]);
+    const logs = await query(logsSql, params);
 
     // Format the response data
     const formattedLogs = logs.map(log => ({
       id: log.id,
-      entity_type: log.entity_type,
+      entity: log.entity,
       entity_id: log.entity_id,
       action: log.action,
-      old_values: log.old_values ? JSON.parse(log.old_values) : null,
-      new_values: log.new_values ? JSON.parse(log.new_values) : null,
-      user: log.user_id ? {
-        id: log.user_id,
-        name: log.user_name,
-        email: log.user_email
-      } : null,
-      created_at: log.created_at
+      changes: {
+        old: log.old_values,
+        new: log.new_values
+      },
+      user: log.user_username || log.user_full_name || `User ${log.user_id}`,
+      user_id: log.user_id,
+      ip_address: log.ip_address,
+      timestamp: log.timestamp
     }));
 
     res.json(paginated(formattedLogs, { page: page || 1, limit: limitNum, total }, 'Audit logs retrieved successfully'));
@@ -114,7 +120,7 @@ exports.getAuditLogs = async (req, res, next) => {
 };
 
 /**
- * Get distinct entity types for filter dropdown
+ * Get distinct entities (table names) for filter dropdown
  * @param {Request} req - Express request object
  * @param {Response} res - Express response object
  * @param {NextFunction} next - Express next middleware function
@@ -122,17 +128,17 @@ exports.getAuditLogs = async (req, res, next) => {
 exports.getEntityTypes = async (req, res, next) => {
   try {
     const sql = `
-      SELECT DISTINCT entity_type
+      SELECT DISTINCT table_name as entity
       FROM audit_logs
-      ORDER BY entity_type ASC
+      ORDER BY table_name ASC
     `;
 
     const results = await query(sql);
-    const entityTypes = results.map(r => r.entity_type);
+    const entities = results.map(r => r.entity).filter(e => e);
 
     res.json(success({
-      data: entityTypes,
-      message: 'Entity types retrieved successfully'
+      data: entities,
+      message: 'Entities retrieved successfully'
     }));
   } catch (error) {
     next(error);
@@ -177,12 +183,12 @@ exports.getAuditStats = async (req, res, next) => {
 
     const actionCounts = await query(actionCountsSql, params);
 
-    // Get entity type counts
+    // Get entity counts (table_name)
     const entityCountsSql = `
-      SELECT entity_type, COUNT(*) as count
+      SELECT table_name as entity, COUNT(*) as count
       FROM audit_logs
       ${whereClause}
-      GROUP BY entity_type
+      GROUP BY table_name
       ORDER BY count DESC
     `;
 
@@ -200,7 +206,7 @@ exports.getAuditStats = async (req, res, next) => {
     // Format action counts
     const actionStats = {};
     actionCounts.forEach(item => {
-      actionStats[item.action.toLowerCase()] = item.count;
+      actionStats[item.action?.toLowerCase() || 'unknown'] = item.count;
     });
 
     res.json(success({
@@ -229,15 +235,17 @@ exports.getAuditLogById = async (req, res, next) => {
     const sql = `
       SELECT
         al.id,
-        al.entity_type,
-        al.entity_id,
+        al.table_name as entity,
+        al.record_id as entity_id,
         al.action,
         al.old_values,
         al.new_values,
         al.user_id,
-        al.created_at,
-        u.full_name as user_name,
-        u.email as user_email
+        u.username as user_username,
+        u.full_name as user_full_name,
+        al.ip_address,
+        al.user_agent,
+        al.created_at as timestamp
       FROM audit_logs al
       LEFT JOIN users u ON al.user_id = u.id
       WHERE al.id = ?
@@ -255,17 +263,18 @@ exports.getAuditLogById = async (req, res, next) => {
 
     const formattedLog = {
       id: log.id,
-      entity_type: log.entity_type,
+      entity: log.entity,
       entity_id: log.entity_id,
       action: log.action,
-      old_values: log.old_values ? JSON.parse(log.old_values) : null,
-      new_values: log.new_values ? JSON.parse(log.new_values) : null,
-      user: log.user_id ? {
-        id: log.user_id,
-        name: log.user_name,
-        email: log.user_email
-      } : null,
-      created_at: log.created_at
+      changes: {
+        old: log.old_values,
+        new: log.new_values
+      },
+      user: log.user_username || log.user_full_name || `User ${log.user_id}`,
+      user_id: log.user_id,
+      ip_address: log.ip_address,
+      user_agent: log.user_agent,
+      timestamp: log.timestamp
     };
 
     res.json(success({
@@ -274,5 +283,56 @@ exports.getAuditLogById = async (req, res, next) => {
     }));
   } catch (error) {
     next(error);
+  }
+};
+
+/**
+ * Create a new audit log entry
+ * Helper function for other controllers to use
+ * @param {Object} data - Audit log data
+ * @param {number} data.user_id - User ID who performed the action
+ * @param {string} data.table_name - Table name being modified
+ * @param {number} data.record_id - Record ID being modified
+ * @param {string} data.action - Action type (CREATE, UPDATE, DELETE, IMPORT, EXPORT)
+ * @param {Object} data.old_values - Old values (for UPDATE/DELETE)
+ * @param {Object} data.new_values - New values (for CREATE/UPDATE)
+ * @param {string} data.ip_address - IP address of the user
+ * @param {string} data.user_agent - User agent string
+ */
+exports.createAuditLog = async (data) => {
+  try {
+    const {
+      user_id,
+      table_name,
+      record_id,
+      action,
+      old_values = null,
+      new_values = null,
+      ip_address = null,
+      user_agent = null
+    } = data;
+
+    const sql = `
+      INSERT INTO audit_logs 
+        (user_id, table_name, record_id, action, old_values, new_values, ip_address, user_agent)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+
+    const result = await query(sql, [
+      user_id,
+      table_name,
+      record_id,
+      action,
+      old_values ? JSON.stringify(old_values) : null,
+      new_values ? JSON.stringify(new_values) : null,
+      ip_address,
+      user_agent
+    ]);
+
+    return result.insertId;
+  } catch (error) {
+    console.error('Error creating audit log:', error);
+    // Don't throw - audit log failure shouldn't break the main operation
+    return null;
   }
 };

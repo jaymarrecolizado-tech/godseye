@@ -26,9 +26,11 @@ export const useMapStore = create((set, get) => ({
       }
 
       const response = await api.getMapData(params)
+      // Handle GeoJSON format - extract features array
+      const features = response.data?.features || []
       set({
-        markers: response.data || [],
-        visibleProjects: response.data || [],
+        markers: features,
+        visibleProjects: features,
         loading: false
       })
     } catch (error) {

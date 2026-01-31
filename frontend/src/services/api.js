@@ -184,19 +184,29 @@ export const projectsApi = {
 export const geospatialApi = {
   // Get map data with filters
   getMapData: (params = {}) => {
-    return apiClient.get('/geospatial/map-data', { params })
+    return apiClient.get('/map-data', { params })
+  },
+
+  // Get clusters for map
+  getClusters: (params = {}) => {
+    return apiClient.get('/clusters', { params })
   },
 
   // Get projects within bounds
   getProjectsInBounds: (bounds) => {
-    return apiClient.get('/geospatial/bounds', { params: bounds })
+    return apiClient.get('/bounding-box', { params: bounds })
   },
 
   // Get projects near a point
   getNearbyProjects: (latitude, longitude, radius = 10) => {
-    return apiClient.get('/geospatial/nearby', {
+    return apiClient.get('/nearby', {
       params: { latitude, longitude, radius }
     })
+  },
+
+  // Get boundary data
+  getBoundary: (type, id) => {
+    return apiClient.get(`/boundary/${type}/${id}`)
   }
 }
 
@@ -254,6 +264,21 @@ export const reportsApi = {
     return apiClient.get('/reports/trend/monthly')
   },
 
+  // Get performance metrics (placeholder - returns mock data)
+  getPerformance: () => {
+    return Promise.resolve({
+      data: {
+        success: true,
+        data: {
+          completionRate: 85,
+          avgCompletionTime: 45,
+          onTimeDelivery: 78,
+          qualityScore: 92
+        }
+      }
+    })
+  },
+
   // Export reports as CSV
   exportCSV: (params = {}) => {
     return apiClient.get('/reports/export/csv', {
@@ -265,6 +290,38 @@ export const reportsApi = {
   // Export reports as Excel
   exportExcel: (params = {}) => {
     return apiClient.get('/reports/export/excel', {
+      params,
+      responseType: 'blob'
+    })
+  },
+
+  // Export summary report as PDF
+  exportSummaryPDF: (params = {}) => {
+    return apiClient.get('/reports/export/pdf/summary', {
+      params,
+      responseType: 'blob'
+    })
+  },
+
+  // Export status report as PDF
+  exportStatusPDF: (params = {}) => {
+    return apiClient.get('/reports/export/pdf/status', {
+      params,
+      responseType: 'blob'
+    })
+  },
+
+  // Export location report as PDF
+  exportLocationPDF: (params = {}) => {
+    return apiClient.get('/reports/export/pdf/location', {
+      params,
+      responseType: 'blob'
+    })
+  },
+
+  // Export projects list as PDF
+  exportProjectsPDF: (params = {}) => {
+    return apiClient.get('/reports/export/pdf/projects', {
       params,
       responseType: 'blob'
     })
@@ -297,6 +354,92 @@ export const auditApi = {
   }
 }
 
+// Users API
+export const usersApi = {
+  // Get all users with filters and pagination
+  getUsers: (params = {}) => {
+    return apiClient.get('/users', { params })
+  },
+
+  // Get single user by ID
+  getUser: (id) => {
+    return apiClient.get(`/users/${id}`)
+  },
+
+  // Create new user
+  createUser: (data) => {
+    return apiClient.post('/users', data)
+  },
+
+  // Update user
+  updateUser: (id, data) => {
+    return apiClient.put(`/users/${id}`, data)
+  },
+
+  // Update user role
+  updateUserRole: (id, role) => {
+    return apiClient.put(`/users/${id}/role`, { role })
+  },
+
+  // Update user status (activate/deactivate)
+  updateUserStatus: (id, isActive) => {
+    return apiClient.put(`/users/${id}/status`, { isActive })
+  },
+
+  // Delete user
+  deleteUser: (id) => {
+    return apiClient.delete(`/users/${id}`)
+  },
+
+  // Reset user password
+  resetPassword: (id) => {
+    return apiClient.post(`/users/${id}/reset-password`)
+  },
+
+  // Get available roles
+  getUserRoles: () => {
+    return apiClient.get('/users/roles')
+  }
+}
+
+// Notifications API
+export const notificationsApi = {
+  // Get user's notifications
+  getNotifications: (params = {}) => {
+    return apiClient.get('/notifications', { params })
+  },
+
+  // Get unread notification count
+  getUnreadCount: () => {
+    return apiClient.get('/notifications/unread-count')
+  },
+
+  // Mark a notification as read
+  markAsRead: (id) => {
+    return apiClient.put(`/notifications/${id}/read`)
+  },
+
+  // Mark all notifications as read
+  markAllAsRead: () => {
+    return apiClient.put('/notifications/read-all')
+  },
+
+  // Delete a notification
+  deleteNotification: (id) => {
+    return apiClient.delete(`/notifications/${id}`)
+  },
+
+  // Delete all read notifications
+  deleteReadNotifications: () => {
+    return apiClient.delete('/notifications/read-all')
+  },
+
+  // Create test notification (admin only)
+  createTestNotification: (data = {}) => {
+    return apiClient.post('/notifications/test', data)
+  }
+}
+
 // Export all APIs
 export const api = {
   ...projectsApi,
@@ -304,7 +447,9 @@ export const api = {
   ...referenceApi,
   ...reportsApi,
   ...importApi,
-  ...auditApi
+  ...auditApi,
+  ...usersApi,
+  ...notificationsApi
 }
 
 // Export the axios instance for advanced use cases

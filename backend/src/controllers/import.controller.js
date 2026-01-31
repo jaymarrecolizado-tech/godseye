@@ -13,6 +13,7 @@ const {
   processCSVFile,
   generateErrorReport
 } = require('../services/csvProcessor');
+const notificationService = require('../services/notificationService');
 
 /**
  * Handle CSV file upload
@@ -382,6 +383,134 @@ exports.deleteImport = async (req, res, next) => {
     }));
 
   } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Download import template CSV
+ * @param {Request} req - Express request object
+ * @param {Response} res - Express response object
+ * @param {NextFunction} next - Express next middleware function
+ */
+exports.downloadTemplate = async (req, res, next) => {
+  try {
+    // Template CSV content with headers and example row
+    const templateContent = `Site Code,Project Name,Site Name,Barangay,Municipality,Province,District,Latitude,Longitude,Date of Activation,Status
+UNDP-TEST-001,Free-WIFI for All,Test Barangay Hall - AP 1,Raele,Itbayat,Batanes,District I,20.728794,121.804235,2024-04-29,Pending`;
+
+    // Set headers for file download
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename="import-template.csv"');
+    res.send(templateContent);
+
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Validate CSV file without importing
+ * @param {Request} req - Express request object
+ * @param {Response} res - Express response object
+ * @param {NextFunction} next - Express next middleware function
+ */
+exports.validateCSV = async (req, res, next) => {
+  try {
+    // Check if file was uploaded
+    if (!req.file) {
+      return res.status(STATUS_CODES.BAD_REQUEST).json({
+        success: false,
+        error: 'No File',
+        message: 'Please upload a CSV file'
+      });
+    }
+
+    const filePath = req.file.path;
+    const storedFilename = req.file.filename;
+
+    // Parse CSV to get headers and validate
+    let headers, totalRows;
+    try {
+      const parseResult = await parseCSV(filePath);
+      headers = parseResult.headers;
+      totalRows = parseResult.totalRows;
+    } catch (parseError) {
+      // Delete uploaded file on parse error
+      deleteUploadedFile(storedFilename);
+      return res.status(STATUS_CODES.BAD_REQUEST).json({
+        success: false,
+        error: 'Parse Error',
+        message: 'Failed to parse CSV file. Please ensure it is a valid CSV format.',
+        details: parseError.message
+      });
+    }
+
+    // Validate headers
+    const headerValidation = validateHeaders(headers);
+    if (!headerValidation.valid) {
+      // Delete uploaded file on validation error
+      deleteUploadedFile(storedFilename);
+      return res.status(STATUS_CODES.BAD_REQUEST).json({
+        success: false,
+        error: 'Invalid Headers',
+        message: headerValidation.error
+      });
+    }
+
+    // Validate each row (first 100 rows only for quick validation)
+    const rowValidationErrors = [];
+    const fs = require('fs');
+    const csv = require('csv-parser');
+    
+    await new Promise((resolve, reject) => {
+      let rowNumber = 0;
+      fs.createReadStream(filePath)
+        .pipe(csv())
+        .on('data', (row) => {
+          rowNumber++;
+          if (rowNumber <= 100) { // Only validate first 100 rows
+            const validation = validateRow(row, rowNumber);
+            if (!validation.valid) {
+              rowValidationErrors.push({
+                rowNumber,
+                siteCode: row['Site Code'],
+                errors: validation.errors
+              });
+            }
+          }
+        })
+        .on('end', resolve)
+        .on('error', reject);
+    });
+
+    // Delete uploaded file after validation
+    deleteUploadedFile(storedFilename);
+
+    // Return validation results
+    const isValid = rowValidationErrors.length === 0;
+    
+    res.json(success({
+      data: {
+        valid: isValid,
+        totalRows,
+        errors: rowValidationErrors,
+        headers: headers,
+        requiredColumns: REQUIRED_COLUMNS,
+        message: isValid
+          ? 'CSV file is valid and ready for import'
+          : `Found ${rowValidationErrors.length} validation errors`
+      },
+      message: isValid
+        ? 'CSV validation passed'
+        : 'CSV validation failed'
+    }));
+
+  } catch (error) {
+    // Clean up uploaded file on error
+    if (req.file) {
+      deleteUploadedFile(req.file.filename);
+    }
     next(error);
   }
 };

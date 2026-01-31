@@ -48,4 +48,12 @@ router.get('/performance', reportController.getPerformance);
 router.get('/export/csv', reportValidation.dateRange, reportController.exportCSV);
 router.get('/export/excel', reportValidation.dateRange, reportController.exportExcel);
 
+// ============================================
+// PDF EXPORT ENDPOINTS
+// ============================================
+router.get('/export/pdf/summary', reportValidation.dateRange, reportController.exportSummaryPDF);
+router.get('/export/pdf/status', reportValidation.dateRange, reportController.exportStatusPDF);
+router.get('/export/pdf/location', reportValidation.dateRange, reportController.exportLocationPDF);
+router.get('/export/pdf/projects', reportValidation.dateRange, reportController.exportProjectsPDF);
+
 module.exports = router;

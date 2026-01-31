@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { MapContainer, TileLayer, useMap, LayersControl, LayerGroup } from 'react-leaflet'
 import MarkerClusterGroup from 'react-leaflet-cluster'
 import { useMapStore } from '@/stores/mapStore'
@@ -76,11 +76,13 @@ const createClusterCustomIcon = function(cluster) {
 // Map bounds controller component
 const MapBoundsController = ({ markers }) => {
   const map = useMap()
+  const hasFitted = useRef(false)
   
   useEffect(() => {
-    if (markers && markers.length > 0) {
+    if (markers && markers.length > 0 && !hasFitted.current) {
       const bounds = L.latLngBounds(markers.map(m => [m.latitude, m.longitude]))
       map.fitBounds(bounds, { padding: [50, 50] })
+      hasFitted.current = true
     }
   }, [map, markers])
   
@@ -118,33 +120,51 @@ const ProjectMap = ({ filters = {} }) => {
     iidb: true,
     elgu: true
   })
+  const hasLoaded = useRef(false)
 
   // Load initial data
   useEffect(() => {
-    const loadData = async () => {
-      setIsLoading(true)
-      await fetchMapData(filters)
-      setIsLoading(false)
+    if (!hasLoaded.current) {
+      hasLoaded.current = true
+      const loadData = async () => {
+        setIsLoading(true)
+        await fetchMapData(filters)
+        setIsLoading(false)
+      }
+      loadData()
     }
-    loadData()
-  }, [fetchMapData, filters])
+  }, [filters]) // Only depend on filters, not fetchMapData
 
   const handleBoundsChange = useCallback((bounds) => {
     setMapBounds(bounds)
   }, [setMapBounds])
 
-  const filteredMarkers = markers.filter(marker => {
-    const typeKey = marker.project_type?.toLowerCase().replace(/[^a-z]/g, '')
-    return layerVisibility[typeKey] !== false
-  })
+  // Handle GeoJSON features - extract properties and add geometry data
+  const processedMarkers = useMemo(() => {
+    return markers.map(feature => ({
+      ...feature.properties,
+      id: feature.properties.id,
+      longitude: feature.geometry.coordinates[0],
+      latitude: feature.geometry.coordinates[1]
+    }))
+  }, [markers])
+
+  const filteredMarkers = useMemo(() => {
+    return processedMarkers.filter(marker => {
+      const typeKey = marker.project_type?.toLowerCase().replace(/[^a-z]/g, '')
+      return layerVisibility[typeKey] !== false
+    })
+  }, [processedMarkers, layerVisibility])
 
   // Group markers by type
-  const markersByType = filteredMarkers.reduce((acc, marker) => {
-    const type = marker.project_type || 'Unknown'
-    if (!acc[type]) acc[type] = []
-    acc[type].push(marker)
-    return acc
-  }, {})
+  const markersByType = useMemo(() => {
+    return filteredMarkers.reduce((acc, marker) => {
+      const type = marker.project_type || 'Unknown'
+      if (!acc[type]) acc[type] = []
+      acc[type].push(marker)
+      return acc
+    }, {})
+  }, [filteredMarkers])
 
   if (isLoading) {
     return (

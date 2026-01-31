@@ -16,6 +16,22 @@ router.use(authenticateToken);
 router.use(requireRole(['Editor', 'Manager', 'Admin']));
 
 // ============================================
+// GET /api/import - List recent imports
+// ============================================
+router.get('/', importController.listImports);
+
+// ============================================
+// GET /api/import/template - Download CSV template
+// Must be BEFORE /:id routes to avoid being caught as an ID
+// ============================================
+router.get('/template', importController.downloadTemplate);
+
+// ============================================
+// POST /api/import/validate - Validate CSV without importing
+// ============================================
+router.post('/validate', uploadCSV, handleUploadError, importController.validateCSV);
+
+// ============================================
 // POST /api/import/csv - Upload CSV file
 // ============================================
 router.post('/csv', uploadCSV, handleUploadError, importController.uploadCSV);
@@ -29,11 +45,6 @@ router.get('/:id/status', importController.getImportStatus);
 // GET /api/import/:id/download - Download error report
 // ============================================
 router.get('/:id/download', importController.downloadErrorReport);
-
-// ============================================
-// GET /api/import - List recent imports
-// ============================================
-router.get('/', importController.listImports);
 
 // ============================================
 // DELETE /api/import/:id - Cancel/delete import

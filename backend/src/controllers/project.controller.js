@@ -5,6 +5,7 @@
 
 const { query, buildPagination } = require('../config/database');
 const { success, paginated, STATUS_CODES } = require('../utils/response');
+const notificationService = require('../services/notificationService');
 
 /**
  * List projects with filtering and pagination
@@ -226,18 +227,17 @@ exports.createProject = async (req, res, next) => {
       });
     }
     
-    // Insert project with spatial point
+    // Insert project
     const insertSql = `
       INSERT INTO project_sites (
-        site_code, project_type_id, site_name, 
+        site_code, project_type_id, site_name,
         barangay_id, municipality_id, province_id, district_id,
-        latitude, longitude, location,
+        latitude, longitude,
         activation_date, status, remarks,
         created_by, updated_by
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ST_GeomFromText(?, 4326), ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
     
-    const pointWKT = `POINT(${longitude} ${latitude})`;
     const userId = req.user.userId;
     
     const result = await query(insertSql, [
@@ -250,7 +250,6 @@ exports.createProject = async (req, res, next) => {
       district_id || null,
       latitude,
       longitude,
-      pointWKT,
       activation_date || null,
       status,
       remarks || null,
@@ -280,6 +279,11 @@ exports.createProject = async (req, res, next) => {
     if (io) {
       io.to('projects').emit('project:created', newProject);
     }
+
+    // Send notifications to admins and managers
+    notificationService.notifyProjectCreated(newProject, userId).catch(error => {
+      console.error('Error sending project creation notification:', error);
+    });
     
     res.status(STATUS_CODES.CREATED).json(success({
       data: newProject,
@@ -340,13 +344,7 @@ exports.updateProject = async (req, res, next) => {
       }
     }
     
-    // Update spatial point if lat/lng changed
-    if (updates.latitude !== undefined || updates.longitude !== undefined) {
-      const lat = updates.latitude !== undefined ? updates.latitude : existing.latitude;
-      const lng = updates.longitude !== undefined ? updates.longitude : existing.longitude;
-      updateFields.push('location = ST_GeomFromText(?, 4326)');
-      params.push(`POINT(${lng} ${lat})`);
-    }
+    // Note: latitude/longitude are already handled above in the allowedFields loop
     
     // Add updated_by
     const userId = req.user.userId;
@@ -389,6 +387,32 @@ exports.updateProject = async (req, res, next) => {
     const io = req.app.get('io');
     if (io) {
       io.to('projects').emit('project:updated', updatedProject);
+    }
+
+    // Send notifications based on what changed
+    if (updates.status && updates.status !== existing.status) {
+      // Status changed - send status change notification
+      notificationService.notifyProjectStatusChanged(
+        updatedProject,
+        existing.status,
+        updates.status,
+        userId
+      ).catch(error => {
+        console.error('Error sending status change notification:', error);
+      });
+    } else {
+      // General update notification
+      const changes = {};
+      for (const key of Object.keys(updates)) {
+        if (updates[key] !== undefined && updates[key] !== existing[key]) {
+          changes[key] = updates[key];
+        }
+      }
+      if (Object.keys(changes).length > 0) {
+        notificationService.notifyProjectUpdated(updatedProject, changes, userId).catch(error => {
+          console.error('Error sending project update notification:', error);
+        });
+      }
     }
     
     res.json(success({
