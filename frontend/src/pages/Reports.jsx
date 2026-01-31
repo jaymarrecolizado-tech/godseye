@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useRef } from 'react'
+import { useEffect, useState, useMemo, useRef, useCallback } from 'react'
 import {
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend,
   BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line,
@@ -7,7 +7,9 @@ import {
 import {
   FileText, Download, Calendar, MapPin, Activity,
   CheckCircle2, Clock, FolderOpen, TrendingUp, Users,
-  Filter, ChevronDown, Loader2, FileSpreadsheet, FileIcon
+  Filter, ChevronDown, Loader2, FileSpreadsheet, FileIcon,
+  X, LayoutGrid, List, BarChart3, PieChart as PieChartIcon,
+  RefreshCw, RotateCcw
 } from 'lucide-react'
 import { reportsApi, referenceApi } from '@/services/api'
 
@@ -32,16 +34,49 @@ const typeColors = {
   'default': '#6b7280'
 }
 
+// Group by options
+const groupByOptions = [
+  { value: 'none', label: 'None (Flat List)', icon: List },
+  { value: 'province', label: 'Province', icon: MapPin },
+  { value: 'municipality', label: 'Municipality', icon: MapPin },
+  { value: 'district', label: 'District', icon: LayoutGrid },
+  { value: 'project_type', label: 'Project Type', icon: FolderOpen },
+  { value: 'status', label: 'Status', icon: Activity },
+  { value: 'activation_month', label: 'Activation Month', icon: Calendar }
+]
+
+// Status options for multi-select
+const statusOptions = [
+  { value: 'Pending', label: 'Pending', color: '#eab308' },
+  { value: 'In Progress', label: 'In Progress', color: '#3b82f6' },
+  { value: 'Done', label: 'Done', color: '#22c55e' },
+  { value: 'Cancelled', label: 'Cancelled', color: '#ef4444' },
+  { value: 'On Hold', label: 'On Hold', color: '#f97316' }
+]
+
 const Reports = () => {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [activeTab, setActiveTab] = useState('overview')
+  
+  // Filter states
   const [dateRange, setDateRange] = useState({ from: '', to: '' })
   const [selectedProvince, setSelectedProvince] = useState('')
-  const [selectedStatus, setSelectedStatus] = useState('')
+  const [selectedMunicipality, setSelectedMunicipality] = useState('')
+  const [selectedDistrict, setSelectedDistrict] = useState('')
+  const [selectedStatuses, setSelectedStatuses] = useState([])
   const [selectedProjectType, setSelectedProjectType] = useState('')
+  const [groupBy, setGroupBy] = useState('none')
+  
+  // Reference data
   const [provinces, setProvinces] = useState([])
+  const [municipalities, setMunicipalities] = useState([])
+  const [districts, setDistricts] = useState([])
   const [projectTypes, setProjectTypes] = useState([])
+  
+  // UI states
+  const [showFilters, setShowFilters] = useState(true)
+  const [filtersLoading, setFiltersLoading] = useState(false)
   
   // Export states
   const [exportFormat, setExportFormat] = useState('csv')
@@ -49,7 +84,6 @@ const Reports = () => {
   const [exportError, setExportError] = useState(null)
   const exportDropdownRef = useRef(null)
   const [showExportDropdown, setShowExportDropdown] = useState(false)
-  const [pdfReportType, setPdfReportType] = useState('summary')
   const [showPDFDropdown, setShowPDFDropdown] = useState(false)
   const pdfDropdownRef = useRef(null)
   
@@ -60,6 +94,7 @@ const Reports = () => {
   const [timelineData, setTimelineData] = useState([])
   const [projectTypeData, setProjectTypeData] = useState([])
   const [performanceData, setPerformanceData] = useState(null)
+  const [customReportData, setCustomReportData] = useState(null)
 
   // Fetch provinces and project types for filters
   useEffect(() => {
@@ -78,50 +113,145 @@ const Reports = () => {
     fetchReferenceData()
   }, [])
 
-  // Fetch all report data
+  // Fetch municipalities when province changes
   useEffect(() => {
-    const fetchReports = async () => {
-      setLoading(true)
-      setError(null)
-      
-      const params = {}
-      if (dateRange.from) params.date_from = dateRange.from
-      if (dateRange.to) params.date_to = dateRange.to
-      
+    const fetchMunicipalities = async () => {
+      if (!selectedProvince) {
+        setMunicipalities([])
+        setSelectedMunicipality('')
+        return
+      }
       try {
-        // Fetch all reports in parallel
-        const [
-          summaryRes,
-          statusRes,
-          locationRes,
-          timelineRes,
-          typeRes,
-          perfRes
-        ] = await Promise.all([
-          reportsApi.getStats(),
-          reportsApi.getSummaryByStatus(),
-          reportsApi.getSummaryByProvince(),
-          reportsApi.getMonthlyTrend(),
-          reportsApi.getSummaryByType(),
-          reportsApi.getPerformance()
-        ])
-        
-        setSummary(summaryRes.data)
-        setStatusData(statusRes.data?.breakdown || [])
-        setLocationData(locationRes.data?.locations || [])
-        setTimelineData(timelineRes.data?.trend || [])
-        setProjectTypeData(typeRes.data?.project_types || [])
-        setPerformanceData(perfRes.data)
+        const response = await referenceApi.getMunicipalities(selectedProvince)
+        setMunicipalities(response.data || [])
       } catch (err) {
-        setError(err.message || 'Failed to load reports')
-        console.error('Reports fetch error:', err)
-      } finally {
-        setLoading(false)
+        console.error('Failed to fetch municipalities:', err)
+        setMunicipalities([])
       }
     }
+    fetchMunicipalities()
+  }, [selectedProvince])
+
+  // Fetch districts when province changes
+  useEffect(() => {
+    const fetchDistricts = async () => {
+      if (!selectedProvince) {
+        setDistricts([])
+        setSelectedDistrict('')
+        return
+      }
+      try {
+        const response = await referenceApi.getDistricts(selectedProvince)
+        setDistricts(response.data || [])
+      } catch (err) {
+        console.error('Failed to fetch districts:', err)
+        setDistricts([])
+      }
+    }
+    fetchDistricts()
+  }, [selectedProvince])
+
+  // Build filter params
+  const buildFilterParams = useCallback(() => {
+    const params = {}
+    if (dateRange.from) params.date_from = dateRange.from
+    if (dateRange.to) params.date_to = dateRange.to
+    if (selectedProvince) params.province_id = selectedProvince
+    if (selectedMunicipality) params.municipality_id = selectedMunicipality
+    if (selectedDistrict) params.district_id = selectedDistrict
+    if (selectedStatuses.length > 0) params.status = selectedStatuses.join(',')
+    if (selectedProjectType) params.project_type_id = selectedProjectType
+    return params
+  }, [dateRange, selectedProvince, selectedMunicipality, selectedDistrict, selectedStatuses, selectedProjectType])
+
+  // Fetch all report data
+  const fetchReports = useCallback(async () => {
+    setLoading(true)
+    setError(null)
     
+    const params = buildFilterParams()
+    
+    try {
+      // Fetch all reports in parallel
+      const [
+        summaryRes,
+        statusRes,
+        locationRes,
+        timelineRes,
+        typeRes,
+        perfRes,
+        customRes
+      ] = await Promise.all([
+        reportsApi.getStats(params),
+        reportsApi.getSummaryByStatus(params),
+        reportsApi.getSummaryByProvince({ ...params, level: 'province' }),
+        reportsApi.getMonthlyTrend(params),
+        reportsApi.getSummaryByType(params),
+        reportsApi.getPerformance(params),
+        reportsApi.getCustomReport({ ...params, group_by: groupBy, limit: 100 })
+      ])
+      
+      setSummary(summaryRes.data)
+      setStatusData(statusRes.data?.breakdown || [])
+      setLocationData(locationRes.data?.locations || [])
+      setTimelineData(timelineRes.data?.timeline || [])
+      setProjectTypeData(typeRes.data?.project_types || [])
+      setPerformanceData(perfRes.data)
+      setCustomReportData(customRes.data)
+    } catch (err) {
+      setError(err.message || 'Failed to load reports')
+      console.error('Reports fetch error:', err)
+    } finally {
+      setLoading(false)
+    }
+  }, [buildFilterParams, groupBy])
+
+  // Fetch reports when filters change
+  useEffect(() => {
     fetchReports()
-  }, [dateRange])
+  }, [fetchReports])
+
+  // Debounced filter change handler
+  const handleFilterChange = useCallback(() => {
+    setFiltersLoading(true)
+    const timer = setTimeout(() => {
+      fetchReports()
+      setFiltersLoading(false)
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [fetchReports])
+
+  // Clear all filters
+  const clearFilters = () => {
+    setDateRange({ from: '', to: '' })
+    setSelectedProvince('')
+    setSelectedMunicipality('')
+    setSelectedDistrict('')
+    setSelectedStatuses([])
+    setSelectedProjectType('')
+    setGroupBy('none')
+  }
+
+  // Toggle status selection
+  const toggleStatus = (status) => {
+    setSelectedStatuses(prev => 
+      prev.includes(status) 
+        ? prev.filter(s => s !== status)
+        : [...prev, status]
+    )
+  }
+
+  // Get active filters count
+  const activeFiltersCount = useMemo(() => {
+    let count = 0
+    if (dateRange.from || dateRange.to) count++
+    if (selectedProvince) count++
+    if (selectedMunicipality) count++
+    if (selectedDistrict) count++
+    if (selectedStatuses.length > 0) count++
+    if (selectedProjectType) count++
+    return count
+  }, [dateRange, selectedProvince, selectedMunicipality, selectedDistrict, selectedStatuses, selectedProjectType])
 
   // Prepare chart data
   const statusChartData = useMemo(() => {
@@ -160,18 +290,17 @@ const Reports = () => {
     }))
   }, [timelineData])
 
+  // Custom report table data
+  const customReportGroups = useMemo(() => {
+    return customReportData?.groups || []
+  }, [customReportData])
+
   const handleExport = async () => {
     setExportLoading(true)
     setExportError(null)
     
     try {
-      // Build export params based on current filters
-      const params = {}
-      if (dateRange.from) params.date_from = dateRange.from
-      if (dateRange.to) params.date_to = dateRange.to
-      if (selectedProvince) params.province_id = selectedProvince
-      if (selectedStatus) params.status = selectedStatus
-      if (selectedProjectType) params.project_type_id = selectedProjectType
+      const params = buildFilterParams()
       
       // Call appropriate export API
       const response = exportFormat === 'csv'
@@ -219,13 +348,7 @@ const Reports = () => {
     setExportError(null)
     
     try {
-      // Build export params based on current filters
-      const params = {}
-      if (dateRange.from) params.date_from = dateRange.from
-      if (dateRange.to) params.date_to = dateRange.to
-      if (selectedProvince) params.province_id = selectedProvince
-      if (selectedStatus) params.status = selectedStatus
-      if (selectedProjectType) params.project_type_id = selectedProjectType
+      const params = buildFilterParams()
       
       // Call appropriate PDF export API based on report type
       let response
@@ -241,6 +364,9 @@ const Reports = () => {
           break
         case 'projects':
           response = await reportsApi.exportProjectsPDF(params)
+          break
+        case 'custom':
+          response = await reportsApi.exportCustomReportPDF({ ...params, group_by: groupBy })
           break
         default:
           response = await reportsApi.exportSummaryPDF(params)
@@ -277,10 +403,6 @@ const Reports = () => {
     }
   }
 
-  const handleDateRangeChange = (field, value) => {
-    setDateRange(prev => ({ ...prev, [field]: value }))
-  }
-  
   // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -339,7 +461,7 @@ const Reports = () => {
     return null
   }
 
-  if (loading) {
+  if (loading && !summary) {
     return (
       <div className="flex items-center justify-center h-96">
         <Loader2 className="w-8 h-8 animate-spin text-blue-600 mr-3" />
@@ -374,6 +496,15 @@ const Reports = () => {
         </div>
         
         <div className="flex items-center gap-3">
+          {/* Refresh Button */}
+          <button
+            onClick={fetchReports}
+            disabled={loading}
+            className="inline-flex items-center px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+
           {/* PDF Export Dropdown */}
           <div className="relative" ref={pdfDropdownRef}>
             <button
@@ -436,6 +567,15 @@ const Reports = () => {
                     Project List
                   </button>
                   
+                  <button
+                    onClick={() => handlePDFExport('custom')}
+                    disabled={exportLoading}
+                    className="w-full px-3 py-2 text-left text-sm rounded-lg hover:bg-gray-50 transition-colors flex items-center gap-2 border-t border-gray-100 pt-2"
+                  >
+                    <BarChart3 className="w-4 h-4 text-indigo-600" />
+                    Custom Grouped Report
+                  </button>
+                  
                   {exportError && (
                     <div className="text-xs text-red-600 bg-red-50 p-2 rounded mt-2">
                       {exportError}
@@ -446,172 +586,300 @@ const Reports = () => {
             )}
           </div>
         
-        {/* Export Dropdown */}
-        <div className="relative" ref={exportDropdownRef}>
-          <button
-            onClick={() => setShowExportDropdown(!showExportDropdown)}
-            disabled={exportLoading}
-            className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {exportLoading ? (
-              <>
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                Exporting...
-              </>
-            ) : (
-              <>
-                <Download className="w-4 h-4 mr-2" />
-                Export Report
-                <ChevronDown className="w-4 h-4 ml-2" />
-              </>
-            )}
-          </button>
-          
-          {showExportDropdown && (
-            <div className="absolute right-0 mt-2 w-72 bg-white rounded-lg shadow-lg border border-gray-200 z-50">
-              <div className="p-4 space-y-4">
-                <h3 className="text-sm font-semibold text-gray-900">Export Options</h3>
-                
-                {/* Format Selection */}
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-2">
-                    Export Format
-                  </label>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => setExportFormat('csv')}
-                      className={`flex-1 px-3 py-2 text-sm rounded-lg border transition-colors flex items-center justify-center gap-2 ${
-                        exportFormat === 'csv'
-                          ? 'bg-blue-50 border-blue-500 text-blue-700'
-                          : 'border-gray-300 text-gray-700 hover:bg-gray-50'
-                      }`}
-                    >
-                      <FileText className="w-4 h-4" />
-                      CSV
-                    </button>
-                    <button
-                      onClick={() => setExportFormat('excel')}
-                      className={`flex-1 px-3 py-2 text-sm rounded-lg border transition-colors flex items-center justify-center gap-2 ${
-                        exportFormat === 'excel'
-                          ? 'bg-blue-50 border-blue-500 text-blue-700'
-                          : 'border-gray-300 text-gray-700 hover:bg-gray-50'
-                      }`}
-                    >
-                      <FileSpreadsheet className="w-4 h-4" />
-                      Excel
-                    </button>
+          {/* Export Dropdown */}
+          <div className="relative" ref={exportDropdownRef}>
+            <button
+              onClick={() => setShowExportDropdown(!showExportDropdown)}
+              disabled={exportLoading}
+              className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {exportLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Exporting...
+                </>
+              ) : (
+                <>
+                  <Download className="w-4 h-4 mr-2" />
+                  Export Report
+                  <ChevronDown className="w-4 h-4 ml-2" />
+                </>
+              )}
+            </button>
+            
+            {showExportDropdown && (
+              <div className="absolute right-0 mt-2 w-72 bg-white rounded-lg shadow-lg border border-gray-200 z-50">
+                <div className="p-4 space-y-4">
+                  <h3 className="text-sm font-semibold text-gray-900">Export Options</h3>
+                  
+                  {/* Format Selection */}
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-2">
+                      Export Format
+                    </label>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setExportFormat('csv')}
+                        className={`flex-1 px-3 py-2 text-sm rounded-lg border transition-colors flex items-center justify-center gap-2 ${
+                          exportFormat === 'csv'
+                            ? 'bg-blue-50 border-blue-500 text-blue-700'
+                            : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                        }`}
+                      >
+                        <FileText className="w-4 h-4" />
+                        CSV
+                      </button>
+                      <button
+                        onClick={() => setExportFormat('excel')}
+                        className={`flex-1 px-3 py-2 text-sm rounded-lg border transition-colors flex items-center justify-center gap-2 ${
+                          exportFormat === 'excel'
+                            ? 'bg-blue-50 border-blue-500 text-blue-700'
+                            : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                        }`}
+                      >
+                        <FileSpreadsheet className="w-4 h-4" />
+                        Excel
+                      </button>
+                    </div>
                   </div>
-                </div>
-                
-                {/* Export Button */}
-                <button
-                  onClick={handleExport}
-                  disabled={exportLoading}
-                  className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium flex items-center justify-center gap-2"
-                >
-                  {exportLoading ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Exporting...
-                    </>
-                  ) : (
-                    <>
-                      <Download className="w-4 h-4" />
-                      Download {exportFormat.toUpperCase()}
-                    </>
+                  
+                  {/* Export Button */}
+                  <button
+                    onClick={handleExport}
+                    disabled={exportLoading}
+                    className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium flex items-center justify-center gap-2"
+                  >
+                    {exportLoading ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Exporting...
+                      </>
+                    ) : (
+                      <>
+                        <Download className="w-4 h-4" />
+                        Download {exportFormat.toUpperCase()}
+                      </>
+                    )}
+                  </button>
+                  
+                  {exportError && (
+                    <div className="text-xs text-red-600 bg-red-50 p-2 rounded">
+                      {exportError}
+                    </div>
                   )}
-                </button>
-                
-                {exportError && (
-                  <div className="text-xs text-red-600 bg-red-50 p-2 rounded">
-                    {exportError}
-                  </div>
-                )}
+                </div>
               </div>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="bg-white rounded-xl p-4 border border-gray-200 shadow-sm">
-        <div className="flex flex-wrap items-center gap-4">
-          {/* Date Range */}
-          <div className="flex items-center space-x-2">
-            <Calendar className="w-4 h-4 text-gray-500" />
-            <span className="text-sm font-medium text-gray-700">Date Range:</span>
+      {/* Filters Section */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div 
+          className="flex items-center justify-between p-4 border-b border-gray-100 cursor-pointer hover:bg-gray-50"
+          onClick={() => setShowFilters(!showFilters)}
+        >
+          <div className="flex items-center gap-2">
+            <Filter className="w-5 h-5 text-gray-500" />
+            <span className="font-medium text-gray-900">Filters & Grouping</span>
+            {activeFiltersCount > 0 && (
+              <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full text-xs font-medium">
+                {activeFiltersCount} active
+              </span>
+            )}
+            {filtersLoading && <Loader2 className="w-4 h-4 animate-spin text-blue-600" />}
           </div>
-          <input
-            type="date"
-            value={dateRange.from}
-            onChange={(e) => handleDateRangeChange('from', e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            placeholder="From"
-          />
-          <span className="text-gray-500">to</span>
-          <input
-            type="date"
-            value={dateRange.to}
-            onChange={(e) => handleDateRangeChange('to', e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            placeholder="To"
-          />
-          
-          {/* Province Filter */}
-          <div className="flex items-center space-x-2 ml-4">
-            <MapPin className="w-4 h-4 text-gray-500" />
-            <span className="text-sm font-medium text-gray-700">Province:</span>
+          <div className="flex items-center gap-2">
+            {activeFiltersCount > 0 && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  clearFilters()
+                }}
+                className="text-sm text-red-600 hover:text-red-700 flex items-center gap-1 px-2 py-1 rounded hover:bg-red-50"
+              >
+                <RotateCcw className="w-3 h-3" />
+                Clear
+              </button>
+            )}
+            <ChevronDown className={`w-5 h-5 text-gray-400 transition-transform ${showFilters ? 'rotate-180' : ''}`} />
           </div>
-          <select
-            value={selectedProvince}
-            onChange={(e) => setSelectedProvince(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-          >
-            <option value="">All Provinces</option>
-            {provinces.map(province => (
-              <option key={province.id} value={province.id}>
-                {province.name}
-              </option>
-            ))}
-          </select>
-          
-          {/* Status Filter */}
-          <div className="flex items-center space-x-2">
-            <Activity className="w-4 h-4 text-gray-500" />
-            <span className="text-sm font-medium text-gray-700">Status:</span>
-          </div>
-          <select
-            value={selectedStatus}
-            onChange={(e) => setSelectedStatus(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-          >
-            <option value="">All Status</option>
-            <option value="Pending">Pending</option>
-            <option value="In Progress">In Progress</option>
-            <option value="Done">Done</option>
-            <option value="Cancelled">Cancelled</option>
-            <option value="On Hold">On Hold</option>
-          </select>
-          
-          {/* Project Type Filter */}
-          <div className="flex items-center space-x-2">
-            <FolderOpen className="w-4 h-4 text-gray-500" />
-            <span className="text-sm font-medium text-gray-700">Type:</span>
-          </div>
-          <select
-            value={selectedProjectType}
-            onChange={(e) => setSelectedProjectType(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-          >
-            <option value="">All Types</option>
-            {projectTypes.map(type => (
-              <option key={type.id} value={type.id}>
-                {type.name}
-              </option>
-            ))}
-          </select>
         </div>
+        
+        {showFilters && (
+          <div className="p-4 space-y-4">
+            {/* First Row - Date Range */}
+            <div className="flex flex-wrap items-center gap-4">
+              <div className="flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-gray-500" />
+                <span className="text-sm font-medium text-gray-700">Date Range:</span>
+              </div>
+              <input
+                type="date"
+                value={dateRange.from}
+                onChange={(e) => setDateRange(prev => ({ ...prev, from: e.target.value }))}
+                className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                placeholder="From"
+              />
+              <span className="text-gray-500">to</span>
+              <input
+                type="date"
+                value={dateRange.to}
+                onChange={(e) => setDateRange(prev => ({ ...prev, to: e.target.value }))}
+                className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                placeholder="To"
+              />
+            </div>
+
+            {/* Second Row - Location Filters */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* Province */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <MapPin className="w-3 h-3 inline mr-1" />
+                  Province
+                </label>
+                <select
+                  value={selectedProvince}
+                  onChange={(e) => setSelectedProvince(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="">All Provinces</option>
+                  {provinces.map(province => (
+                    <option key={province.id} value={province.id}>
+                      {province.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Municipality */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <MapPin className="w-3 h-3 inline mr-1" />
+                  Municipality
+                </label>
+                <select
+                  value={selectedMunicipality}
+                  onChange={(e) => setSelectedMunicipality(e.target.value)}
+                  disabled={!selectedProvince}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-500"
+                >
+                  <option value="">{selectedProvince ? 'All Municipalities' : 'Select Province First'}</option>
+                  {municipalities.map(municipality => (
+                    <option key={municipality.id} value={municipality.id}>
+                      {municipality.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* District */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <LayoutGrid className="w-3 h-3 inline mr-1" />
+                  District
+                </label>
+                <select
+                  value={selectedDistrict}
+                  onChange={(e) => setSelectedDistrict(e.target.value)}
+                  disabled={!selectedProvince}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-500"
+                >
+                  <option value="">{selectedProvince ? 'All Districts' : 'Select Province First'}</option>
+                  {districts.map(district => (
+                    <option key={district.id} value={district.id}>
+                      {district.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Third Row - Status and Project Type */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Status Multi-select */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <Activity className="w-3 h-3 inline mr-1" />
+                  Status
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {statusOptions.map(status => (
+                    <button
+                      key={status.value}
+                      onClick={() => toggleStatus(status.value)}
+                      className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                        selectedStatuses.includes(status.value)
+                          ? 'ring-2 ring-offset-1'
+                          : 'hover:bg-gray-100'
+                      }`}
+                      style={{
+                        backgroundColor: selectedStatuses.includes(status.value) ? status.color + '20' : '#f3f4f6',
+                        color: selectedStatuses.includes(status.value) ? status.color : '#6b7280',
+                        ringColor: selectedStatuses.includes(status.value) ? status.color : 'transparent'
+                      }}
+                    >
+                      <span 
+                        className="w-2 h-2 rounded-full inline-block mr-1.5"
+                        style={{ backgroundColor: status.color }}
+                      />
+                      {status.label}
+                      {selectedStatuses.includes(status.value) && (
+                        <X className="w-3 h-3 inline ml-1.5" />
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Project Type */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <FolderOpen className="w-3 h-3 inline mr-1" />
+                  Project Type
+                </label>
+                <select
+                  value={selectedProjectType}
+                  onChange={(e) => setSelectedProjectType(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="">All Types</option>
+                  {projectTypes.map(type => (
+                    <option key={type.id} value={type.id}>
+                      {type.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Fourth Row - Group By */}
+            <div className="pt-4 border-t border-gray-100">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <BarChart3 className="w-3 h-3 inline mr-1" />
+                Group Report By
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {groupByOptions.map(option => (
+                  <button
+                    key={option.value}
+                    onClick={() => setGroupBy(option.value)}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
+                      groupBy === option.value
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                  >
+                    <option.icon className="w-4 h-4" />
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Summary Dashboard */}
@@ -620,36 +888,105 @@ const Reports = () => {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard
             title="Total Projects"
-            value={summary?.summary?.total_projects?.toLocaleString() || 0}
+            value={customReportData?.summary?.total_projects?.toLocaleString() || summary?.summary?.total_projects?.toLocaleString() || 0}
             icon={FolderOpen}
             color="blue"
           />
           <StatCard
             title="Completion Rate"
-            value={`${summary?.summary?.completion_rate || 0}%`}
+            value={`${customReportData?.summary?.completion_rate || summary?.summary?.completion_rate || 0}%`}
             icon={CheckCircle2}
             color="green"
           />
           <StatCard
             title="Active Projects"
-            value={(summary?.summary?.in_progress || 0).toLocaleString()}
+            value={(customReportData?.summary?.in_progress || summary?.summary?.in_progress || 0).toLocaleString()}
             icon={Clock}
             color="yellow"
           />
           <StatCard
             title="Provinces Covered"
-            value={summary?.summary?.provinces_with_projects || 0}
+            value={customReportData?.summary?.provinces_count || customReportData?.summary?.provinces_with_projects || summary?.summary?.provinces_with_projects || 0}
             icon={MapPin}
             color="purple"
           />
         </div>
       </section>
 
+      {/* Custom Grouped Report Section */}
+      {groupBy !== 'none' && customReportData && (
+        <section className="bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
+          <div className="flex items-center justify-between mb-4">
+            <SectionTitle 
+              title={`Grouped by ${groupByOptions.find(o => o.value === groupBy)?.label || groupBy}`} 
+              icon={BarChart3} 
+            />
+            <span className="text-sm text-gray-500">
+              {customReportGroups.length} groups • {customReportData.summary?.total_projects || 0} total projects
+            </span>
+          </div>
+          
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="text-left py-3 px-4 font-medium text-gray-700">Group</th>
+                  <th className="text-right py-3 px-4 font-medium text-gray-700">Total</th>
+                  <th className="text-right py-3 px-4 font-medium text-gray-700">Pending</th>
+                  <th className="text-right py-3 px-4 font-medium text-gray-700">In Progress</th>
+                  <th className="text-right py-3 px-4 font-medium text-gray-700">Done</th>
+                  <th className="text-right py-3 px-4 font-medium text-gray-700">Completion %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {customReportGroups.map((group, index) => (
+                  <tr key={index} className="border-b border-gray-100 hover:bg-gray-50">
+                    <td className="py-3 px-4">
+                      <div className="flex items-center">
+                        {group.color_code && (
+                          <span 
+                            className="w-3 h-3 rounded-full mr-2"
+                            style={{ backgroundColor: group.color_code }}
+                          />
+                        )}
+                        <div>
+                          <span className="font-medium text-gray-900">{group.group_name}</span>
+                          {group.province_name && (
+                            <span className="text-xs text-gray-500 block">{group.province_name}</span>
+                          )}
+                        </div>
+                      </div>
+                    </td>
+                    <td className="text-right py-3 px-4 font-semibold">{group.total || 0}</td>
+                    <td className="text-right py-3 px-4 text-yellow-600">{group.pending || 0}</td>
+                    <td className="text-right py-3 px-4 text-blue-600">{group.in_progress || 0}</td>
+                    <td className="text-right py-3 px-4 text-green-600">{group.done || 0}</td>
+                    <td className="text-right py-3 px-4">
+                      <div className="flex items-center justify-end gap-2">
+                        <div className="w-16 h-2 bg-gray-200 rounded-full overflow-hidden">
+                          <div 
+                            className="h-full bg-green-500 rounded-full"
+                            style={{ width: `${Math.min(group.completion_rate || 0, 100)}%` }}
+                          />
+                        </div>
+                        <span className="text-xs text-gray-600 w-10">
+                          {Number(group.completion_rate || 0).toFixed(1)}%
+                        </span>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
       {/* Charts Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Status Distribution */}
         <section className="bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
-          <SectionTitle title="Status Distribution" icon={PieChart} />
+          <SectionTitle title="Status Distribution" icon={PieChartIcon} />
           <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>

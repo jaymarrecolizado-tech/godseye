@@ -43,6 +43,11 @@ router.get('/by-project-type', reportValidation.dateRange, reportController.getB
 router.get('/performance', reportController.getPerformance);
 
 // ============================================
+// CUSTOM REPORT WITH FILTERS AND GROUPING
+// ============================================
+router.get('/custom', reportValidation.dateRange, reportController.getCustomReport);
+
+// ============================================
 // EXPORT ENDPOINTS
 // ============================================
 router.get('/export/csv', reportValidation.dateRange, reportController.exportCSV);
@@ -55,5 +60,6 @@ router.get('/export/pdf/summary', reportValidation.dateRange, reportController.e
 router.get('/export/pdf/status', reportValidation.dateRange, reportController.exportStatusPDF);
 router.get('/export/pdf/location', reportValidation.dateRange, reportController.exportLocationPDF);
 router.get('/export/pdf/projects', reportValidation.dateRange, reportController.exportProjectsPDF);
+router.get('/export/pdf/custom', reportValidation.dateRange, reportController.exportCustomReportPDF);
 
 module.exports = router;

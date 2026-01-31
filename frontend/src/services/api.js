@@ -231,6 +231,13 @@ export const referenceApi = {
     })
   },
 
+  // Get districts by province
+  getDistricts: (provinceId) => {
+    return apiClient.get('/reference/districts', {
+      params: { province_id: provinceId }
+    })
+  },
+
   // Get all project types
   getProjectTypes: () => {
     return apiClient.get('/reference/project-types')
@@ -240,8 +247,8 @@ export const referenceApi = {
 // Reports API
 export const reportsApi = {
   // Get dashboard summary
-  getStats: () => {
-    return apiClient.get('/reports/summary')
+  getStats: (params = {}) => {
+    return apiClient.get('/reports/summary', { params })
   },
 
   // Get summary by project type
@@ -265,8 +272,13 @@ export const reportsApi = {
   },
 
   // Get performance metrics
-  getPerformance: () => {
-    return apiClient.get('/reports/performance')
+  getPerformance: (params = {}) => {
+    return apiClient.get('/reports/performance', { params })
+  },
+
+  // Get custom report with filters and grouping
+  getCustomReport: (params = {}) => {
+    return apiClient.get('/reports/custom', { params })
   },
 
   // Export reports as CSV
@@ -312,6 +324,14 @@ export const reportsApi = {
   // Export projects list as PDF
   exportProjectsPDF: (params = {}) => {
     return apiClient.get('/reports/export/pdf/projects', {
+      params,
+      responseType: 'blob'
+    })
+  },
+
+  // Export custom grouped report as PDF
+  exportCustomReportPDF: (params = {}) => {
+    return apiClient.get('/reports/export/pdf/custom', {
       params,
       responseType: 'blob'
     })

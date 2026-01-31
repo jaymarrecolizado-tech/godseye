@@ -39,7 +39,7 @@ const STATUS_COLORS = {
  * @returns {string} Complete HTML document
  */
 const createBaseTemplate = (title, content, options = {}) => {
-  const { subtitle = '', dateRange = '' } = options;
+  const { subtitle = '', dateRange = '', filters = [] } = options;
   const generatedDate = new Date().toLocaleDateString('en-US', {
     year: 'numeric',
     month: 'long',
@@ -47,6 +47,17 @@ const createBaseTemplate = (title, content, options = {}) => {
     hour: '2-digit',
     minute: '2-digit'
   });
+
+  // Build filters display HTML
+  let filtersHtml = '';
+  if (filters && filters.length > 0) {
+    filtersHtml = `
+      <div class="applied-filters">
+        <strong>Applied Filters:</strong>
+        ${filters.map(f => `<span class="filter-tag">${f.field}: ${f.value}</span>`).join('')}
+      </div>
+    `;
+  }
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -142,6 +153,25 @@ const createBaseTemplate = (title, content, options = {}) => {
     
     .content {
       margin-top: 15px;
+    }
+    
+    .applied-filters {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      padding: 10px 15px;
+      margin-bottom: 20px;
+      font-size: 10px;
+    }
+    
+    .filter-tag {
+      display: inline-block;
+      background: #dbeafe;
+      color: #1e40af;
+      padding: 2px 8px;
+      border-radius: 12px;
+      margin: 2px 4px;
+      font-size: 9px;
     }
     
     .summary-cards {
@@ -394,6 +424,15 @@ const createBaseTemplate = (title, content, options = {}) => {
       border-radius: 50%;
       margin-right: 6px;
     }
+    
+    .group-header {
+      background: #f1f5f9;
+      font-weight: 600;
+    }
+    
+    .group-row {
+      border-left: 3px solid #2563eb;
+    }
   </style>
 </head>
 <body>
@@ -412,6 +451,8 @@ const createBaseTemplate = (title, content, options = {}) => {
       <div class="date">Generated: ${generatedDate}</div>
     </div>
   </div>
+  
+  ${filtersHtml}
   
   <div class="content">
     ${content}
@@ -665,9 +706,9 @@ const generateStatusReportPDF = async (data) => {
             <td class="numeric">
               <div style="display: flex; align-items: center; gap: 8px;">
                 <div class="progress-bar" style="width: 60px;">
-                  <div class="progress-fill" style="width: ${parseFloat(row.completion_percentage) || 0}%; background: ${BRAND_COLORS.success}"></div>
+                  <div class="progress-fill" style="width: ${Math.min(parseFloat(row.completion_percentage) || 0, 100)}%; background: ${BRAND_COLORS.success}"></div>
                 </div>
-                <span>${(parseFloat(row.completion_percentage) || 0).toFixed(1)}%</span>
+                <span>${Number(parseFloat(row.completion_percentage) || 0).toFixed(1)}%</span>
               </div>
             </td>
           </tr>
@@ -965,10 +1006,183 @@ const generateProjectsPDF = async (projects, options = {}) => {
   return await generatePDF(html, 'projects-export.pdf');
 };
 
+/**
+ * Generate Custom Grouped Report PDF
+ * @param {Object} data - Report data from getCustomReport
+ * @returns {Promise<Buffer>} PDF buffer
+ */
+const generateCustomReportPDF = async (data) => {
+  const { groups, summary, group_by, applied_filters } = data.data || data;
+  
+  const groupByLabels = {
+    'none': 'Flat List',
+    'province': 'Province',
+    'municipality': 'Municipality',
+    'district': 'District',
+    'project_type': 'Project Type',
+    'status': 'Status',
+    'activation_month': 'Activation Month'
+  };
+  
+  // Calculate status totals
+  const statusTotals = {
+    pending: groups.reduce((sum, row) => sum + (row.pending || 0), 0),
+    in_progress: groups.reduce((sum, row) => sum + (row.in_progress || 0), 0),
+    done: groups.reduce((sum, row) => sum + (row.done || 0), 0),
+    cancelled: groups.reduce((sum, row) => sum + (row.cancelled || 0), 0),
+    on_hold: groups.reduce((sum, row) => sum + (row.on_hold || 0), 0)
+  };
+  
+  const content = `
+    <div class="summary-cards">
+      <div class="summary-card">
+        <div class="value">${formatNumber(summary.total_projects)}</div>
+        <div class="label">Total Projects</div>
+      </div>
+      <div class="summary-card">
+        <div class="value">${summary.completion_rate}%</div>
+        <div class="label">Completion Rate</div>
+      </div>
+      <div class="summary-card">
+        <div class="value">${formatNumber(groups.length)}</div>
+        <div class="label">${groupByLabels[group_by] || 'Groups'}</div>
+      </div>
+      <div class="summary-card">
+        <div class="value">${formatNumber(summary.provinces_count || 0)}</div>
+        <div class="label">Provinces</div>
+      </div>
+    </div>
+    
+    <div class="info-box">
+      <p><strong>Report Configuration:</strong></p>
+      <p>• Grouped by: ${groupByLabels[group_by] || group_by}</p>
+      <p>• Total Groups: ${groups.length}</p>
+      <p>• Status Distribution: ${statusTotals.done} Done, ${statusTotals.in_progress} In Progress, ${statusTotals.pending} Pending</p>
+    </div>
+    
+    <div class="section-title">${groupByLabels[group_by] || 'Data'} Breakdown</div>
+    <table>
+      <thead>
+        <tr>
+          <th>${groupByLabels[group_by] || 'Group'}</th>
+          <th class="numeric">Total</th>
+          <th class="numeric">Pending</th>
+          <th class="numeric">In Progress</th>
+          <th class="numeric">Done</th>
+          <th class="numeric">Cancelled</th>
+          <th class="numeric">On Hold</th>
+          ${group_by === 'project_type' ? '<th class="numeric">Provinces</th><th class="numeric">Municipalities</th>' : ''}
+          ${group_by === 'province' ? '<th class="numeric">Municipalities</th><th class="numeric">Types</th>' : ''}
+          ${group_by === 'municipality' ? '<th class="numeric">Types</th>' : ''}
+          <th class="numeric">Completion %</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${groups.map(row => `
+          <tr class="group-row">
+            <td>
+              ${row.color_code ? `<span class="color-dot" style="background: ${row.color_code}"></span>` : ''}
+              <strong>${row.group_name || row.site_name || row.site_code || 'Unknown'}</strong>
+              ${row.province_name ? `<br><small style="color: #64748b;">${row.province_name}</small>` : ''}
+            </td>
+            <td class="numeric font-bold">${formatNumber(row.total || 0)}</td>
+            <td class="numeric">${formatNumber(row.pending || 0)}</td>
+            <td class="numeric">${formatNumber(row.in_progress || 0)}</td>
+            <td class="numeric" style="color: ${BRAND_COLORS.success}">${formatNumber(row.done || 0)}</td>
+            <td class="numeric" style="color: ${BRAND_COLORS.danger}">${formatNumber(row.cancelled || 0)}</td>
+            <td class="numeric" style="color: ${BRAND_COLORS.warning}">${formatNumber(row.on_hold || 0)}</td>
+            ${group_by === 'project_type' ? `
+              <td class="numeric">${formatNumber(row.provinces_count || 0)}</td>
+              <td class="numeric">${formatNumber(row.municipalities_count || 0)}</td>
+            ` : ''}
+            ${group_by === 'province' ? `
+              <td class="numeric">${formatNumber(row.municipalities_count || 0)}</td>
+              <td class="numeric">${formatNumber(row.project_types_count || 0)}</td>
+            ` : ''}
+            ${group_by === 'municipality' ? `
+              <td class="numeric">${formatNumber(row.project_types_count || 0)}</td>
+            ` : ''}
+            <td class="numeric">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <div class="progress-bar" style="width: 50px;">
+                  <div class="progress-fill" style="width: ${Math.min(parseFloat(row.completion_rate) || 0, 100)}%; background: ${BRAND_COLORS.success}"></div>
+                </div>
+                <span>${Number(parseFloat(row.completion_rate) || 0).toFixed(1)}%</span>
+              </div>
+            </td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+    
+    <div class="section-title">Summary Statistics</div>
+    <div class="two-column">
+      <div class="column">
+        <table>
+          <thead>
+            <tr>
+              <th>Status</th>
+              <th class="numeric">Count</th>
+              <th class="numeric">Percentage</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="status-badge status-done">Done</span></td>
+              <td class="numeric">${formatNumber(statusTotals.done)}</td>
+              <td class="numeric">${summary.total_projects > 0 ? ((statusTotals.done / summary.total_projects) * 100).toFixed(1) : 0}%</td>
+            </tr>
+            <tr>
+              <td><span class="status-badge status-in-progress">In Progress</span></td>
+              <td class="numeric">${formatNumber(statusTotals.in_progress)}</td>
+              <td class="numeric">${summary.total_projects > 0 ? ((statusTotals.in_progress / summary.total_projects) * 100).toFixed(1) : 0}%</td>
+            </tr>
+            <tr>
+              <td><span class="status-badge status-pending">Pending</span></td>
+              <td class="numeric">${formatNumber(statusTotals.pending)}</td>
+              <td class="numeric">${summary.total_projects > 0 ? ((statusTotals.pending / summary.total_projects) * 100).toFixed(1) : 0}%</td>
+            </tr>
+            <tr>
+              <td><span class="status-badge status-cancelled">Cancelled</span></td>
+              <td class="numeric">${formatNumber(statusTotals.cancelled)}</td>
+              <td class="numeric">${summary.total_projects > 0 ? ((statusTotals.cancelled / summary.total_projects) * 100).toFixed(1) : 0}%</td>
+            </tr>
+            <tr>
+              <td><span class="status-badge status-on-hold">On Hold</span></td>
+              <td class="numeric">${formatNumber(statusTotals.on_hold)}</td>
+              <td class="numeric">${summary.total_projects > 0 ? ((statusTotals.on_hold / summary.total_projects) * 100).toFixed(1) : 0}%</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="column">
+        <div class="info-box">
+          <p><strong>Coverage Overview:</strong></p>
+          <p>• Projects span ${summary.provinces_count || 0} provinces</p>
+          <p>• ${summary.municipalities_count || 0} municipalities involved</p>
+          <p>• ${summary.project_types_count || 0} project types represented</p>
+          ${applied_filters && applied_filters.length > 0 ? `
+            <p style="margin-top: 10px;"><strong>Applied Filters:</strong></p>
+            ${applied_filters.map(f => `<p>• ${f.field}: ${f.value}</p>`).join('')}
+          ` : '<p>• No filters applied (all data)</p>'}
+        </div>
+      </div>
+    </div>
+  `;
+  
+  const html = createBaseTemplate('Custom Grouped Report', content, {
+    subtitle: `Grouped by ${groupByLabels[group_by] || group_by}`,
+    filters: applied_filters || []
+  });
+  
+  return await generatePDF(html, 'custom-report.pdf');
+};
+
 module.exports = {
   generateSummaryReportPDF,
   generateStatusReportPDF,
   generateLocationReportPDF,
   generateProjectsPDF,
+  generateCustomReportPDF,
   generatePDF
 };
