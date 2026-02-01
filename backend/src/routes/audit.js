@@ -1,11 +1,20 @@
 /**
  * Audit Log Routes
  * Handles audit log API endpoints
+ * 
+ * SECURITY NOTE: All audit log routes require authentication.
+ * Only users with Manager role or higher can access audit logs.
  */
 
 const express = require('express');
 const router = express.Router();
 const auditController = require('../controllers/audit.controller');
+const { authenticateToken, requireMinRole } = require('../middleware/auth');
+
+// Apply authentication to all audit log routes
+// Restrict access to Manager role and above (Manager, Admin)
+router.use(authenticateToken);
+router.use(requireMinRole('Manager'));
 
 /**
  * @route   GET /api/audit-logs

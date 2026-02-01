@@ -1,11 +1,150 @@
 /**
  * Report Controller
  * Business logic for reports and analytics
+ * 
+ * SECURITY NOTES:
+ * - CSV exports sanitize formula injection attacks (fields starting with =, +, -, @, tab, carriage return)
+ * - Date validation ensures consistent parsing and prevents edge case injection
+ * - All exports are rate-limited in the routes layer
  */
 
 const { query } = require('../config/database');
 const { success, STATUS_CODES } = require('../utils/response');
 const pdfGenerator = require('../services/pdfGenerator');
+
+/**
+ * Sanitize CSV value to prevent formula injection attacks
+ * CSV formula injection occurs when cells start with characters that spreadsheet
+ * applications interpret as formulas (=, +, -, @) or control characters (tab, CR)
+ * 
+ * @param {*} value - Value to sanitize
+ * @returns {string} Sanitized value safe for CSV export
+ * 
+ * Security: Prefixes dangerous characters with apostrophe to neutralize formulas
+ */
+const sanitizeCSVValue = (value) => {
+  if (value === null || value === undefined) return '';
+  
+  const str = String(value);
+  
+  // Check for CSV formula injection patterns
+  // These characters at the start of a cell can trigger formula execution in Excel/Google Sheets
+  const dangerousPrefixes = ['=', '+', '-', '@', '\t', '\r'];
+  
+  // If value starts with dangerous character, prefix with apostrophe to neutralize
+  // The apostrophe tells spreadsheet apps to treat the cell as text, not a formula
+  if (dangerousPrefixes.some(prefix => str.startsWith(prefix))) {
+    return "'" + str;
+  }
+  
+  return str;
+};
+
+/**
+ * Validate and normalize date string
+ * Ensures consistent date parsing and handles edge cases
+ * 
+ * @param {string} dateStr - Date string to validate
+ * @param {Object} options - Validation options
+ * @param {string} options.fieldName - Name of the field for error messages
+ * @param {Date} options.minDate - Minimum allowed date
+ * @param {Date} options.maxDate - Maximum allowed date
+ * @returns {Object} Validation result { isValid: boolean, value: string|null, error: string|null }
+ */
+const validateDate = (dateStr, options = {}) => {
+  const { fieldName = 'Date', minDate, maxDate } = options;
+  
+  if (!dateStr || dateStr.trim() === '') {
+    return { isValid: true, value: null, error: null };
+  }
+  
+  // Check format: YYYY-MM-DD (ISO 8601 date format)
+  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+  if (!dateRegex.test(dateStr)) {
+    return { 
+      isValid: false, 
+      value: null, 
+      error: `${fieldName} must be in YYYY-MM-DD format` 
+    };
+  }
+  
+  // Parse the date and validate it's a real date
+  const date = new Date(dateStr);
+  
+  // Check if date is valid (not "Invalid Date")
+  if (isNaN(date.getTime())) {
+    return { 
+      isValid: false, 
+      value: null, 
+      error: `${fieldName} is not a valid date` 
+    };
+  }
+  
+  // Extract year, month, day from input to verify no overflow occurred
+  // (e.g., 2023-02-30 would be parsed as 2023-03-02)
+  const [inputYear, inputMonth, inputDay] = dateStr.split('-').map(Number);
+  const parsedYear = date.getUTCFullYear();
+  const parsedMonth = date.getUTCMonth() + 1; // JS months are 0-indexed
+  const parsedDay = date.getUTCDate();
+  
+  if (inputYear !== parsedYear || inputMonth !== parsedMonth || inputDay !== parsedDay) {
+    return { 
+      isValid: false, 
+      value: null, 
+      error: `${fieldName} contains invalid date values (e.g., Feb 30)` 
+    };
+  }
+  
+  // Check minimum date constraint
+  if (minDate && date < minDate) {
+    return { 
+      isValid: false, 
+      value: null, 
+      error: `${fieldName} must be on or after ${minDate.toISOString().split('T')[0]}` 
+    };
+  }
+  
+  // Check maximum date constraint
+  if (maxDate && date > maxDate) {
+    return { 
+      isValid: false, 
+      value: null, 
+      error: `${fieldName} must be on or before ${maxDate.toISOString().split('T')[0]}` 
+    };
+  }
+  
+  // Return normalized date string
+  return { 
+    isValid: true, 
+    value: dateStr, 
+    error: null 
+  };
+};
+
+/**
+ * Validate date range (date_from should be before or equal to date_to)
+ * 
+ * @param {string} dateFrom - Start date string
+ * @param {string} dateTo - End date string
+ * @returns {Object} Validation result { isValid: boolean, error: string|null }
+ */
+const validateDateRange = (dateFrom, dateTo) => {
+  if (!dateFrom || !dateTo) {
+    return { isValid: true, error: null };
+  }
+  
+  const fromDate = new Date(dateFrom);
+  const toDate = new Date(dateTo);
+  
+  if (fromDate > toDate) {
+    return { 
+      isValid: false, 
+      error: 'Start date must be before or equal to end date' 
+    };
+  }
+  
+  return { isValid: true, error: null };
+};
 
 /**
  * Get dashboard summary statistics
@@ -972,27 +1111,92 @@ exports.getCustomReport = async (req, res, next) => {
 };
 
 /**
- * Build export filter conditions
+ * Build export filter conditions with enhanced date validation
  * @param {Object} query - Request query parameters
- * @returns {Object} - Filter conditions and parameters
+ * @returns {Object} - Filter conditions, parameters, and validation errors
  */
 const buildExportFilters = (query) => {
   let whereClause = 'WHERE 1=1';
   const params = [];
+  const validationErrors = [];
+  
+  // Validate and process date range first
+  if (query.date_from) {
+    const dateValidation = validateDate(query.date_from, { 
+      fieldName: 'From Date',
+      minDate: new Date('1900-01-01'),
+      maxDate: new Date('2099-12-31')
+    });
+    
+    if (!dateValidation.isValid) {
+      validationErrors.push(dateValidation.error);
+    } else if (dateValidation.value) {
+      whereClause += ' AND ps.activation_date >= ?';
+      params.push(dateValidation.value);
+    }
+  }
+  
+  if (query.date_to) {
+    const dateValidation = validateDate(query.date_to, { 
+      fieldName: 'To Date',
+      minDate: new Date('1900-01-01'),
+      maxDate: new Date('2099-12-31')
+    });
+    
+    if (!dateValidation.isValid) {
+      validationErrors.push(dateValidation.error);
+    } else if (dateValidation.value) {
+      whereClause += ' AND ps.activation_date <= ?';
+      params.push(dateValidation.value);
+    }
+  }
+  
+  // Validate date range relationship (from <= to)
+  if (query.date_from && query.date_to) {
+    const rangeValidation = validateDateRange(query.date_from, query.date_to);
+    if (!rangeValidation.isValid) {
+      validationErrors.push(rangeValidation.error);
+    }
+  }
+  
+  // Return early if there are validation errors
+  if (validationErrors.length > 0) {
+    return { 
+      whereClause, 
+      params, 
+      validationErrors,
+      isValid: false 
+    };
+  }
   
   if (query.province_id) {
-    whereClause += ' AND ps.province_id = ?';
-    params.push(parseInt(query.province_id));
+    const provinceId = parseInt(query.province_id);
+    if (isNaN(provinceId) || provinceId < 1) {
+      validationErrors.push('Province ID must be a positive integer');
+    } else {
+      whereClause += ' AND ps.province_id = ?';
+      params.push(provinceId);
+    }
   }
   
   if (query.municipality_id) {
-    whereClause += ' AND ps.municipality_id = ?';
-    params.push(parseInt(query.municipality_id));
+    const municipalityId = parseInt(query.municipality_id);
+    if (isNaN(municipalityId) || municipalityId < 1) {
+      validationErrors.push('Municipality ID must be a positive integer');
+    } else {
+      whereClause += ' AND ps.municipality_id = ?';
+      params.push(municipalityId);
+    }
   }
   
   if (query.status) {
     const statuses = query.status.split(',').filter(s => s.trim());
-    if (statuses.length === 1) {
+    const validStatuses = ['Pending', 'In Progress', 'Done', 'Cancelled', 'On Hold'];
+    const invalidStatuses = statuses.filter(s => !validStatuses.includes(s));
+    
+    if (invalidStatuses.length > 0) {
+      validationErrors.push(`Invalid status values: ${invalidStatuses.join(', ')}`);
+    } else if (statuses.length === 1) {
       whereClause += ' AND ps.status = ?';
       params.push(statuses[0]);
     } else if (statuses.length > 1) {
@@ -1002,21 +1206,21 @@ const buildExportFilters = (query) => {
   }
   
   if (query.project_type_id) {
-    whereClause += ' AND ps.project_type_id = ?';
-    params.push(parseInt(query.project_type_id));
+    const projectTypeId = parseInt(query.project_type_id);
+    if (isNaN(projectTypeId) || projectTypeId < 1) {
+      validationErrors.push('Project Type ID must be a positive integer');
+    } else {
+      whereClause += ' AND ps.project_type_id = ?';
+      params.push(projectTypeId);
+    }
   }
   
-  if (query.date_from) {
-    whereClause += ' AND ps.activation_date >= ?';
-    params.push(query.date_from);
-  }
-  
-  if (query.date_to) {
-    whereClause += ' AND ps.activation_date <= ?';
-    params.push(query.date_to);
-  }
-  
-  return { whereClause, params };
+  return { 
+    whereClause, 
+    params, 
+    validationErrors,
+    isValid: validationErrors.length === 0 
+  };
 };
 
 /**
@@ -1059,6 +1263,8 @@ const getExportData = async (whereClause, params) => {
  * Convert data to CSV format
  * @param {Array} data - Array of objects to convert
  * @returns {string} - CSV string
+ * 
+ * SECURITY: Applies formula injection sanitization to all values
  */
 const convertToCSV = (data) => {
   if (data.length === 0) return '';
@@ -1080,12 +1286,16 @@ const convertToCSV = (data) => {
     'Created By'
   ];
   
-  // Escape function for CSV values
+  // Escape function for CSV values with formula injection protection
   const escapeCSV = (value) => {
     if (value === null || value === undefined) return '';
-    const str = String(value);
-    // If value contains comma, quote, or newline, wrap in quotes and escape inner quotes
-    if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+    
+    // First sanitize for formula injection
+    const sanitized = sanitizeCSVValue(value);
+    const str = String(sanitized);
+    
+    // Then escape for CSV format (handle commas, quotes, newlines)
+    if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
       return `"${str.replace(/"/g, '""')}"`;
     }
     return str;
@@ -1125,7 +1335,19 @@ const convertToCSV = (data) => {
  */
 exports.exportCSV = async (req, res, next) => {
   try {
-    const { whereClause, params } = buildExportFilters(req.query);
+    // Build filters with validation
+    const filterResult = buildExportFilters(req.query);
+    
+    // Return validation errors if any
+    if (!filterResult.isValid) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: filterResult.validationErrors
+      });
+    }
+    
+    const { whereClause, params } = filterResult;
     const data = await getExportData(whereClause, params);
     
     if (data.length === 0) {
@@ -1151,6 +1373,7 @@ exports.exportCSV = async (req, res, next) => {
     res.send(bom + csv);
     
   } catch (error) {
+    console.error('CSV export error:', error);
     next(error);
   }
 };
@@ -1166,6 +1389,38 @@ exports.exportSummaryPDF = async (req, res, next) => {
     // Get summary data using existing function
     const { date_from, date_to, province_id, status, project_type_id } = req.query;
     
+    // Validate date parameters
+    if (date_from) {
+      const dateValidation = validateDate(date_from, { fieldName: 'From Date' });
+      if (!dateValidation.isValid) {
+        return res.status(400).json({
+          success: false,
+          message: dateValidation.error
+        });
+      }
+    }
+    
+    if (date_to) {
+      const dateValidation = validateDate(date_to, { fieldName: 'To Date' });
+      if (!dateValidation.isValid) {
+        return res.status(400).json({
+          success: false,
+          message: dateValidation.error
+        });
+      }
+    }
+    
+    // Validate date range
+    if (date_from && date_to) {
+      const rangeValidation = validateDateRange(date_from, date_to);
+      if (!rangeValidation.isValid) {
+        return res.status(400).json({
+          success: false,
+          message: rangeValidation.error
+        });
+      }
+    }
+    
     // Build filter
     let filterClause = '';
     const filterParams = [];
@@ -1179,11 +1434,28 @@ exports.exportSummaryPDF = async (req, res, next) => {
       filterParams.push(date_to);
     }
     if (province_id) {
+      const provinceId = parseInt(province_id);
+      if (isNaN(provinceId) || provinceId < 1) {
+        return res.status(400).json({
+          success: false,
+          message: 'Province ID must be a positive integer'
+        });
+      }
       filterClause += ' AND ps.province_id = ?';
-      filterParams.push(parseInt(province_id));
+      filterParams.push(provinceId);
     }
     if (status) {
       const statuses = status.split(',').filter(s => s.trim());
+      const validStatuses = ['Pending', 'In Progress', 'Done', 'Cancelled', 'On Hold'];
+      const invalidStatuses = statuses.filter(s => !validStatuses.includes(s));
+      
+      if (invalidStatuses.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid status values: ${invalidStatuses.join(', ')}`
+        });
+      }
+      
       if (statuses.length === 1) {
         filterClause += ' AND ps.status = ?';
         filterParams.push(statuses[0]);
@@ -1193,8 +1465,15 @@ exports.exportSummaryPDF = async (req, res, next) => {
       }
     }
     if (project_type_id) {
+      const projectTypeId = parseInt(project_type_id);
+      if (isNaN(projectTypeId) || projectTypeId < 1) {
+        return res.status(400).json({
+          success: false,
+          message: 'Project Type ID must be a positive integer'
+        });
+      }
       filterClause += ' AND ps.project_type_id = ?';
-      filterParams.push(parseInt(project_type_id));
+      filterParams.push(projectTypeId);
     }
     
     // Get overall statistics
@@ -1270,6 +1549,7 @@ exports.exportSummaryPDF = async (req, res, next) => {
     res.send(pdfBuffer);
     
   } catch (error) {
+    console.error('PDF summary export error:', error);
     next(error);
   }
 };
@@ -1379,6 +1659,7 @@ exports.exportStatusPDF = async (req, res, next) => {
     res.send(pdfBuffer);
     
   } catch (error) {
+    console.error('PDF status export error:', error);
     next(error);
   }
 };
@@ -1493,6 +1774,7 @@ exports.exportLocationPDF = async (req, res, next) => {
     res.send(pdfBuffer);
     
   } catch (error) {
+    console.error('PDF location export error:', error);
     next(error);
   }
 };
@@ -1505,7 +1787,19 @@ exports.exportLocationPDF = async (req, res, next) => {
  */
 exports.exportProjectsPDF = async (req, res, next) => {
   try {
-    const { whereClause, params } = buildExportFilters(req.query);
+    // Build filters with validation
+    const filterResult = buildExportFilters(req.query);
+    
+    // Return validation errors if any
+    if (!filterResult.isValid) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: filterResult.validationErrors
+      });
+    }
+    
+    const { whereClause, params } = filterResult;
     const projects = await getExportData(whereClause, params);
     
     if (projects.length === 0) {
@@ -1539,6 +1833,7 @@ exports.exportProjectsPDF = async (req, res, next) => {
     res.send(pdfBuffer);
     
   } catch (error) {
+    console.error('PDF projects export error:', error);
     next(error);
   }
 };
@@ -1719,6 +2014,7 @@ exports.exportCustomReportPDF = async (req, res, next) => {
     res.send(pdfBuffer);
     
   } catch (error) {
+    console.error('PDF custom report export error:', error);
     next(error);
   }
 };
@@ -1732,7 +2028,19 @@ exports.exportCustomReportPDF = async (req, res, next) => {
  */
 exports.exportExcel = async (req, res, next) => {
   try {
-    const { whereClause, params } = buildExportFilters(req.query);
+    // Build filters with validation
+    const filterResult = buildExportFilters(req.query);
+    
+    // Return validation errors if any
+    if (!filterResult.isValid) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: filterResult.validationErrors
+      });
+    }
+    
+    const { whereClause, params } = filterResult;
     const data = await getExportData(whereClause, params);
     
     if (data.length === 0) {
@@ -1761,6 +2069,7 @@ exports.exportExcel = async (req, res, next) => {
     res.send(bom + csv);
     
   } catch (error) {
+    console.error('Excel export error:', error);
     next(error);
   }
 };
