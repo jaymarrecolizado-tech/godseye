@@ -206,6 +206,10 @@ exports.createProject = async (req, res, next) => {
       site_code,
       project_type_id,
       site_name,
+      implementing_agency,
+      budget,
+      description,
+      expected_output,
       barangay_id,
       municipality_id,
       province_id,
@@ -213,8 +217,11 @@ exports.createProject = async (req, res, next) => {
       latitude,
       longitude,
       activation_date,
+      start_date,
+      end_date,
       status = 'Pending',
-      remarks
+      remarks,
+      accomplishments
     } = req.body;
     
     // Check for duplicate site_code
@@ -231,11 +238,12 @@ exports.createProject = async (req, res, next) => {
     const insertSql = `
       INSERT INTO project_sites (
         site_code, project_type_id, site_name,
+        implementing_agency, budget, description, expected_output,
         barangay_id, municipality_id, province_id, district_id,
         latitude, longitude,
-        activation_date, status, remarks,
+        activation_date, start_date, end_date, status, remarks,
         created_by, updated_by
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
     
     const userId = req.user.userId;
@@ -244,6 +252,10 @@ exports.createProject = async (req, res, next) => {
       site_code,
       project_type_id,
       site_name,
+      implementing_agency || null,
+      budget || null,
+      description || null,
+      expected_output || null,
       barangay_id || null,
       municipality_id,
       province_id,
@@ -251,11 +263,36 @@ exports.createProject = async (req, res, next) => {
       latitude,
       longitude,
       activation_date || null,
+      start_date || null,
+      end_date || null,
       status,
       remarks || null,
       userId,
       userId
     ]);
+    
+    const projectId = result.insertId;
+    
+    // Insert accomplishments if provided
+    if (accomplishments && Array.isArray(accomplishments) && accomplishments.length > 0) {
+      const accomplishmentSql = `
+        INSERT INTO accomplishments
+        (project_site_id, accomplishment_date, description, percentage_complete, actual_output, remarks, created_by)
+        VALUES ?
+      `;
+      
+      const accomplishmentValues = accomplishments.map(acc => [
+        projectId,
+        acc.accomplishment_date || new Date(),
+        acc.description,
+        acc.percentage_complete || 0,
+        acc.actual_output || null,
+        acc.remarks || null,
+        userId
+      ]);
+      
+      await query(accomplishmentSql, [accomplishmentValues]);
+    }
     
     // Get the created project
     const [newProject] = await query(`
@@ -333,8 +370,9 @@ exports.updateProject = async (req, res, next) => {
     
     const allowedFields = [
       'site_code', 'project_type_id', 'site_name',
+      'implementing_agency', 'budget', 'description', 'expected_output',
       'barangay_id', 'municipality_id', 'province_id', 'district_id',
-      'latitude', 'longitude', 'activation_date', 'status', 'remarks'
+      'latitude', 'longitude', 'activation_date', 'start_date', 'end_date', 'status', 'remarks'
     ];
     
     for (const field of allowedFields) {
@@ -501,6 +539,233 @@ exports.getProjectHistory = async (req, res, next) => {
     res.json(success({
       data: history,
       message: 'Status history retrieved successfully'
+    }));
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get project accomplishments
+ * @param {Request} req - Express request object
+ * @param {Response} res - Express response object
+ * @param {NextFunction} next - Express next middleware function
+ */
+exports.getProjectAccomplishments = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    
+    // Check if project exists
+    const [existing] = await query('SELECT id FROM project_sites WHERE id = ?', [id]);
+    if (!existing) {
+      return res.status(STATUS_CODES.NOT_FOUND).json({
+        success: false,
+        error: 'Not Found',
+        message: 'Project not found'
+      });
+    }
+    
+    const accomplishmentsSql = `
+      SELECT
+        a.id,
+        a.accomplishment_date,
+        a.description,
+        a.percentage_complete,
+        a.actual_output,
+        a.remarks,
+        a.created_at,
+        u.full_name as created_by_name
+      FROM accomplishments a
+      LEFT JOIN users u ON a.created_by = u.id
+      WHERE a.project_site_id = ?
+      ORDER BY a.accomplishment_date DESC
+    `;
+    
+    const accomplishments = await query(accomplishmentsSql, [id]);
+    
+    res.json(success({
+      data: accomplishments,
+      message: 'Accomplishments retrieved successfully'
+    }));
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Add accomplishment to a project
+ * @param {Request} req - Express request object
+ * @param {Response} res - Express response object
+ * @param {NextFunction} next - Express next middleware function
+ */
+exports.addAccomplishment = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const {
+      accomplishment_date,
+      description,
+      percentage_complete,
+      actual_output,
+      remarks
+    } = req.body;
+    
+    // Check if project exists
+    const [existing] = await query('SELECT id FROM project_sites WHERE id = ?', [id]);
+    if (!existing) {
+      return res.status(STATUS_CODES.NOT_FOUND).json({
+        success: false,
+        error: 'Not Found',
+        message: 'Project not found'
+      });
+    }
+    
+    // Validate required fields
+    if (!description || description.trim() === '') {
+      return res.status(STATUS_CODES.BAD_REQUEST).json({
+        success: false,
+        error: 'Bad Request',
+        message: 'Accomplishment description is required'
+      });
+    }
+    
+    const userId = req.user.userId;
+    
+    const insertSql = `
+      INSERT INTO accomplishments
+      (project_site_id, accomplishment_date, description, percentage_complete, actual_output, remarks, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `;
+    
+    const result = await query(insertSql, [
+      id,
+      accomplishment_date || new Date(),
+      description,
+      percentage_complete || 0,
+      actual_output || null,
+      remarks || null,
+      userId
+    ]);
+    
+    // Get the created accomplishment
+    const [newAccomplishment] = await query(`
+      SELECT
+        a.*,
+        u.full_name as created_by_name
+      FROM accomplishments a
+      LEFT JOIN users u ON a.created_by = u.id
+      WHERE a.id = ?
+    `, [result.insertId]);
+    
+    res.status(STATUS_CODES.CREATED).json(success({
+      data: newAccomplishment,
+      message: 'Accomplishment added successfully'
+    }));
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Update an accomplishment
+ * @param {Request} req - Express request object
+ * @param {Response} res - Express response object
+ * @param {NextFunction} next - Express next middleware function
+ */
+exports.updateAccomplishment = async (req, res, next) => {
+  try {
+    const { id, accomplishmentId } = req.params;
+    const updates = req.body;
+    
+    // Check if accomplishment exists and belongs to the project
+    const [existing] = await query(
+      'SELECT * FROM accomplishments WHERE id = ? AND project_site_id = ?',
+      [accomplishmentId, id]
+    );
+    
+    if (!existing) {
+      return res.status(STATUS_CODES.NOT_FOUND).json({
+        success: false,
+        error: 'Not Found',
+        message: 'Accomplishment not found'
+      });
+    }
+    
+    // Build dynamic update query
+    const updateFields = [];
+    const params = [];
+    
+    const allowedFields = [
+      'accomplishment_date', 'description', 'percentage_complete', 'actual_output', 'remarks'
+    ];
+    
+    for (const field of allowedFields) {
+      if (updates[field] !== undefined) {
+        updateFields.push(`${field} = ?`);
+        params.push(updates[field]);
+      }
+    }
+    
+    if (updateFields.length === 0) {
+      return res.status(STATUS_CODES.BAD_REQUEST).json({
+        success: false,
+        error: 'Bad Request',
+        message: 'No valid fields to update'
+      });
+    }
+    
+    params.push(accomplishmentId);
+    
+    const updateSql = `UPDATE accomplishments SET ${updateFields.join(', ')} WHERE id = ?`;
+    await query(updateSql, params);
+    
+    // Get updated accomplishment
+    const [updatedAccomplishment] = await query(`
+      SELECT
+        a.*,
+        u.full_name as created_by_name
+      FROM accomplishments a
+      LEFT JOIN users u ON a.created_by = u.id
+      WHERE a.id = ?
+    `, [accomplishmentId]);
+    
+    res.json(success({
+      data: updatedAccomplishment,
+      message: 'Accomplishment updated successfully'
+    }));
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Delete an accomplishment
+ * @param {Request} req - Express request object
+ * @param {Response} res - Express response object
+ * @param {NextFunction} next - Express next middleware function
+ */
+exports.deleteAccomplishment = async (req, res, next) => {
+  try {
+    const { id, accomplishmentId } = req.params;
+    
+    // Check if accomplishment exists and belongs to the project
+    const [existing] = await query(
+      'SELECT id FROM accomplishments WHERE id = ? AND project_site_id = ?',
+      [accomplishmentId, id]
+    );
+    
+    if (!existing) {
+      return res.status(STATUS_CODES.NOT_FOUND).json({
+        success: false,
+        error: 'Not Found',
+        message: 'Accomplishment not found'
+      });
+    }
+    
+    await query('DELETE FROM accomplishments WHERE id = ?', [accomplishmentId]);
+    
+    res.json(success({
+      data: { id: accomplishmentId },
+      message: 'Accomplishment deleted successfully'
     }));
   } catch (error) {
     next(error);

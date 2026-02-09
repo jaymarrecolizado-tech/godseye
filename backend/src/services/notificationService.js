@@ -6,6 +6,26 @@
 const { query } = require('../config/database');
 
 /**
+ * Helper function to safely parse JSON data
+ * Handles cases where data is already an object or is a string
+ * @param {*} data - Data to parse
+ * @returns {Object|null} Parsed object or null
+ */
+const safeJsonParse = (data) => {
+  if (data === null || data === undefined) return null;
+  if (typeof data === 'object') return data;
+  if (typeof data === 'string') {
+    try {
+      return JSON.parse(data);
+    } catch (e) {
+      console.warn('Failed to parse notification data:', data);
+      return null;
+    }
+  }
+  return null;
+};
+
+/**
  * Create a notification for a user
  * @param {Object} params - Notification parameters
  * @param {number} params.userId - Recipient user ID
@@ -36,13 +56,13 @@ const createNotification = async ({ userId, type, title, message, data = null })
     if (global.io) {
       global.io.to(`user:${userId}`).emit('notification:new', {
         ...notification,
-        data: notification.data ? JSON.parse(notification.data) : null
+        data: safeJsonParse(notification.data)
       });
     }
 
     return {
       ...notification,
-      data: notification.data ? JSON.parse(notification.data) : null
+      data: safeJsonParse(notification.data)
     };
   } catch (error) {
     console.error('Error creating notification:', error);
@@ -308,7 +328,7 @@ const getUserNotifications = async (userId, { limit = 50, offset = 0, unreadOnly
 
     return notifications.map(n => ({
       ...n,
-      data: n.data ? JSON.parse(n.data) : null
+      data: safeJsonParse(n.data)
     }));
   } catch (error) {
     console.error('Error getting user notifications:', error);

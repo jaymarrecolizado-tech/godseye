@@ -74,17 +74,32 @@ const createClusterCustomIcon = function(cluster) {
 }
 
 // Map bounds controller component
-const MapBoundsController = ({ markers }) => {
+const MapBoundsController = ({ markers, bounds, onBoundsFitted }) => {
   const map = useMap()
   const hasFitted = useRef(false)
+  const prevBounds = useRef(null)
   
   useEffect(() => {
-    if (markers && markers.length > 0 && !hasFitted.current) {
-      const bounds = L.latLngBounds(markers.map(m => [m.latitude, m.longitude]))
-      map.fitBounds(bounds, { padding: [50, 50] })
-      hasFitted.current = true
+    // If explicit bounds are provided and changed, fit to them
+    if (bounds && JSON.stringify(bounds) !== JSON.stringify(prevBounds.current)) {
+      const latLngBounds = L.latLngBounds(
+        [bounds.south, bounds.west],
+        [bounds.north, bounds.east]
+      )
+      map.fitBounds(latLngBounds, { padding: [50, 50] })
+      prevBounds.current = bounds
+      if (onBoundsFitted) onBoundsFitted()
+      return
     }
-  }, [map, markers])
+    
+    // Otherwise fit to markers on initial load
+    if (markers && markers.length > 0 && !hasFitted.current && !bounds) {
+      const latLngBounds = L.latLngBounds(markers.map(m => [m.latitude, m.longitude]))
+      map.fitBounds(latLngBounds, { padding: [50, 50] })
+      hasFitted.current = true
+      if (onBoundsFitted) onBoundsFitted()
+    }
+  }, [map, markers, bounds, onBoundsFitted])
   
   return null
 }
@@ -111,8 +126,8 @@ const MapEvents = ({ onBoundsChange }) => {
   return null
 }
 
-const ProjectMap = ({ filters = {} }) => {
-  const { markers, selectedMarker, fetchMapData, setMapBounds, selectMarker } = useMapStore()
+const ProjectMap = ({ filters = {}, onBoundsFitted }) => {
+  const { markers, selectedMarker, districtBounds, fetchMapData, setMapBounds, selectMarker, clearDistrictBounds } = useMapStore()
   const [isLoading, setIsLoading] = useState(true)
   const [layerVisibility, setLayerVisibility] = useState({
     wifi: true,
@@ -133,7 +148,19 @@ const ProjectMap = ({ filters = {} }) => {
       }
       loadData()
     }
-  }, [filters]) // Only depend on filters, not fetchMapData
+  }, []) // Only run once on mount
+
+  // Refetch when filters change
+  useEffect(() => {
+    if (hasLoaded.current) {
+      const loadData = async () => {
+        setIsLoading(true)
+        await fetchMapData(filters)
+        setIsLoading(false)
+      }
+      loadData()
+    }
+  }, [filters])
 
   const handleBoundsChange = useCallback((bounds) => {
     setMapBounds(bounds)
@@ -188,7 +215,11 @@ const ProjectMap = ({ filters = {} }) => {
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
         
-        <MapBoundsController markers={filteredMarkers} />
+        <MapBoundsController 
+          markers={filteredMarkers} 
+          bounds={districtBounds}
+          onBoundsFitted={onBoundsFitted}
+        />
         <MapEvents onBoundsChange={handleBoundsChange} />
         
         <LayersControl position="topright">

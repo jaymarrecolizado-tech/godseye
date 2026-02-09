@@ -1,26 +1,25 @@
 /**
  * Upload Middleware
  * Multer configuration for file uploads
+ * Security Audit Remediation (SEC-009): CSV content validation
  */
 
 const multer = require('multer');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const fs = require('fs');
+const csv = require('csv-parser');
 
-// Ensure uploads directory exists
 const uploadsDir = path.join(__dirname, '../../uploads');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
-// Configure storage
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, uploadsDir);
   },
   filename: (req, file, cb) => {
-    // Generate unique filename: uuid + original name
     const uniqueSuffix = `${uuidv4()}-${Date.now()}`;
     const extension = path.extname(file.originalname);
     const basename = path.basename(file.originalname, extension);
@@ -28,7 +27,52 @@ const storage = multer.diskStorage({
   }
 });
 
-// File filter - only CSV files
+const validateCSVContent = (filePath) => {
+  return new Promise((resolve, reject) => {
+    const results = [];
+    let lineCount = 0;
+    const maxLinesToCheck = 10;
+    const suspiciousPatterns = [
+      /^=/,
+      /^\+/,
+      /^-/,
+      /^@/,
+      /<script/i,
+      /javascript:/i,
+      /on\w+\s*=/i
+    ];
+
+    fs.createReadStream(filePath, { encoding: 'utf8', highWaterMark: 64 * 1024 })
+      .pipe(csv())
+      .on('data', (row) => {
+        if (lineCount < maxLinesToCheck) {
+          lineCount++;
+          const values = Object.values(row);
+          for (const value of values) {
+            if (typeof value === 'string') {
+              for (const pattern of suspiciousPatterns) {
+                if (pattern.test(value.trim())) {
+                  return reject(new Error('File contains potentially malicious content'));
+                }
+              }
+            }
+          }
+          results.push(row);
+        }
+      })
+      .on('end', () => {
+        if (results.length === 0) {
+          reject(new Error('CSV file is empty or has no valid data rows'));
+        } else {
+          resolve({ valid: true, sampleRows: results.length });
+        }
+      })
+      .on('error', (err) => {
+        reject(new Error(`Invalid CSV format: ${err.message}`));
+      });
+  });
+};
+
 const fileFilter = (req, file, cb) => {
   const allowedMimetypes = [
     'text/csv',
@@ -122,5 +166,6 @@ module.exports = {
   uploadCSV,
   handleUploadError,
   deleteUploadedFile,
-  uploadsDir
+  uploadsDir,
+  validateCSVContent
 };

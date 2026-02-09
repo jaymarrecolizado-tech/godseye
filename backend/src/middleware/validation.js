@@ -98,6 +98,29 @@ const projectValidation = {
       .isLength({ min: 2, max: 150 })
       .withMessage('Site name must be between 2 and 150 characters'),
     
+    body('implementing_agency')
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ min: 2, max: 150 })
+      .withMessage('Implementing agency must be between 2 and 150 characters'),
+    
+    body('budget')
+      .optional({ nullable: true })
+      .isFloat({ min: 0 })
+      .withMessage('Budget must be a positive number'),
+    
+    body('description')
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ max: 5000 })
+      .withMessage('Description cannot exceed 5000 characters'),
+    
+    body('expected_output')
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ max: 5000 })
+      .withMessage('Expected output cannot exceed 5000 characters'),
+    
     body('province_id')
       .notEmpty()
       .withMessage('Province is required')
@@ -131,6 +154,18 @@ const projectValidation = {
       .optional()
       .isISO8601()
       .withMessage('Activation date must be a valid date (YYYY-MM-DD)')
+      .toDate(),
+    
+    body('start_date')
+      .optional({ nullable: true })
+      .isISO8601()
+      .withMessage('Start date must be a valid date (YYYY-MM-DD)')
+      .toDate(),
+    
+    body('end_date')
+      .optional({ nullable: true })
+      .isISO8601()
+      .withMessage('End date must be a valid date (YYYY-MM-DD)')
       .toDate(),
     
     body('status')
@@ -170,6 +205,29 @@ const projectValidation = {
       .trim()
       .isLength({ min: 2, max: 150 })
       .withMessage('Site name must be between 2 and 150 characters'),
+    
+    body('implementing_agency')
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ min: 2, max: 150 })
+      .withMessage('Implementing agency must be between 2 and 150 characters'),
+    
+    body('budget')
+      .optional({ nullable: true })
+      .isFloat({ min: 0 })
+      .withMessage('Budget must be a positive number'),
+    
+    body('description')
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ max: 5000 })
+      .withMessage('Description cannot exceed 5000 characters'),
+    
+    body('expected_output')
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ max: 5000 })
+      .withMessage('Expected output cannot exceed 5000 characters'),
     
     body('province_id')
       .optional()
@@ -211,6 +269,18 @@ const projectValidation = {
       .withMessage('Activation date must be a valid date (YYYY-MM-DD)')
       .toDate(),
     
+    body('start_date')
+      .optional({ nullable: true })
+      .isISO8601()
+      .withMessage('Start date must be a valid date (YYYY-MM-DD)')
+      .toDate(),
+    
+    body('end_date')
+      .optional({ nullable: true })
+      .isISO8601()
+      .withMessage('End date must be a valid date (YYYY-MM-DD)')
+      .toDate(),
+    
     body('status')
       .optional()
       .isIn(['Pending', 'In Progress', 'Done', 'Cancelled', 'On Hold'])
@@ -240,6 +310,96 @@ const projectValidation = {
   // Get project history
   getHistory: [
     commonRules.id,
+    handleValidationErrors
+  ],
+
+  // Add accomplishment
+  addAccomplishment: [
+    commonRules.id,
+    
+    body('accomplishment_date')
+      .optional()
+      .isISO8601()
+      .withMessage('Accomplishment date must be a valid date (YYYY-MM-DD)')
+      .toDate(),
+    
+    body('description')
+      .trim()
+      .notEmpty()
+      .withMessage('Accomplishment description is required')
+      .isLength({ min: 2, max: 2000 })
+      .withMessage('Description must be between 2 and 2000 characters'),
+    
+    body('percentage_complete')
+      .optional()
+      .isFloat({ min: 0, max: 100 })
+      .withMessage('Percentage complete must be between 0 and 100'),
+    
+    body('actual_output')
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ max: 2000 })
+      .withMessage('Actual output cannot exceed 2000 characters'),
+    
+    body('remarks')
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ max: 1000 })
+      .withMessage('Remarks cannot exceed 1000 characters'),
+    
+    handleValidationErrors
+  ],
+
+  // Update accomplishment
+  updateAccomplishment: [
+    commonRules.id,
+    
+    param('accomplishmentId')
+      .isInt({ min: 1 })
+      .withMessage('Accomplishment ID must be a positive integer')
+      .toInt(),
+    
+    body('accomplishment_date')
+      .optional()
+      .isISO8601()
+      .withMessage('Accomplishment date must be a valid date (YYYY-MM-DD)')
+      .toDate(),
+    
+    body('description')
+      .optional()
+      .trim()
+      .isLength({ min: 2, max: 2000 })
+      .withMessage('Description must be between 2 and 2000 characters'),
+    
+    body('percentage_complete')
+      .optional()
+      .isFloat({ min: 0, max: 100 })
+      .withMessage('Percentage complete must be between 0 and 100'),
+    
+    body('actual_output')
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ max: 2000 })
+      .withMessage('Actual output cannot exceed 2000 characters'),
+    
+    body('remarks')
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ max: 1000 })
+      .withMessage('Remarks cannot exceed 1000 characters'),
+    
+    handleValidationErrors
+  ],
+
+  // Delete accomplishment
+  deleteAccomplishment: [
+    commonRules.id,
+    
+    param('accomplishmentId')
+      .isInt({ min: 1 })
+      .withMessage('Accomplishment ID must be a positive integer')
+      .toInt(),
+    
     handleValidationErrors
   ],
   

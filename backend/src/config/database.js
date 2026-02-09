@@ -41,18 +41,11 @@ const pool = mysql.createPool(dbConfig);
 const testConnection = async () => {
   try {
     const connection = await pool.getConnection();
-    console.log('✓ Database connection established successfully');
-    
-    // Test a simple query
-    const [rows] = await connection.query('SELECT 1 as test');
-    if (rows[0].test === 1) {
-      console.log('✓ Database query test passed');
-    }
-    
+    await connection.query('SELECT 1 as test');
     connection.release();
     return true;
   } catch (error) {
-    console.error('✗ Database connection failed:', error.message);
+    console.error('✗ Database connection failed');
     return false;
   }
 };
@@ -73,8 +66,6 @@ const query = async (sql, params) => {
     return results;
   } catch (error) {
     console.error('Database query error:', error.message);
-    console.error('SQL:', sql);
-    console.error('Params:', params);
     throw error;
   } finally {
     if (connection) {

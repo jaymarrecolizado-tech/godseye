@@ -1,20 +1,28 @@
 /**
  * Authentication Controller
+ * Security Audit Remediation - Complete Rewrite
  * Handles user authentication, token generation, and session management
+ * 
+ * Fixes Implemented:
+ * - CRITICAL-002: Removed hardcoded JWT secret fallback
+ * - HIGH-002: Implemented account lockout mechanism
+ * - HIGH-004: Migrated refresh tokens from in-memory to database
+ * - MEDIUM-001: Strengthened password policy
  */
 
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { query } = require('../config/database');
 const { sendSuccess, sendError, STATUS_CODES, ERROR_MESSAGES } = require('../utils/response');
-
-// Token configuration
-const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-this-in-production';
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '15m';
-const JWT_REFRESH_EXPIRES_IN = process.env.JWT_REFRESH_EXPIRES_IN || '7d';
-
-// In-memory refresh token store (consider using Redis in production)
-const refreshTokens = new Set();
+const authConfig = require('../config/auth');
+const { validatePasswordStrength, calculatePasswordStrength } = require('../utils/passwordValidator');
+const { 
+  storeRefreshToken, 
+  validateRefreshToken, 
+  revokeRefreshToken, 
+  revokeAllUserTokens,
+  cleanupExpiredTokens
+} = require('../utils/tokenStorage');
 
 /**
  * Generate access token
@@ -22,7 +30,7 @@ const refreshTokens = new Set();
  * @returns {string} JWT access token
  */
 const generateAccessToken = (payload) => {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+  return jwt.sign(payload, authConfig.JWT_SECRET, { expiresIn: authConfig.JWT_EXPIRES_IN });
 };
 
 /**
@@ -31,18 +39,84 @@ const generateAccessToken = (payload) => {
  * @returns {string} JWT refresh token
  */
 const generateRefreshToken = (payload) => {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_REFRESH_EXPIRES_IN });
+  return jwt.sign(payload, authConfig.JWT_SECRET, { expiresIn: authConfig.JWT_REFRESH_EXPIRES_IN });
+};
+
+/**
+ * Check if account is locked
+ * @param {Object} user - User object from database
+ * @returns {boolean} True if account is locked
+ */
+const isAccountLocked = (user) => {
+  if (!user.locked_until) return false;
+  const now = new Date();
+  const lockedUntil = new Date(user.locked_until);
+  return lockedUntil > now;
+};
+
+/**
+ * Get remaining lockout time in minutes
+ * @param {Object} user - User object from database
+ * @returns {number} Remaining minutes
+ */
+const getLockoutRemainingMinutes = (user) => {
+  if (!user.locked_until) return 0;
+  const now = new Date();
+  const lockedUntil = new Date(user.locked_until);
+  if (lockedUntil <= now) return 0;
+  return Math.ceil((lockedUntil - now) / 60000);
+};
+
+/**
+ * Increment failed login attempts
+ * @param {number} userId - User ID
+ * @param {number} currentAttempts - Current failed attempt count
+ */
+const incrementFailedAttempts = async (userId, currentAttempts) => {
+  const newAttempts = currentAttempts + 1;
+  
+  if (newAttempts >= authConfig.MAX_FAILED_ATTEMPTS) {
+    const lockedUntil = new Date(Date.now() + authConfig.LOCKOUT_DURATION_MINUTES * 60 * 1000);
+    await query(
+      `UPDATE users 
+       SET failed_login_attempts = ?, 
+           locked_until = ? 
+       WHERE id = ?`,
+      [newAttempts, lockedUntil, userId]
+    );
+  } else {
+    await query(
+      `UPDATE users SET failed_login_attempts = ? WHERE id = ?`,
+      [newAttempts, userId]
+    );
+  }
+};
+
+/**
+ * Reset failed login attempts on successful login
+ * @param {number} userId - User ID
+ */
+const resetFailedAttempts = async (userId) => {
+  await query(
+    `UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = ?`,
+    [userId]
+  );
 };
 
 /**
  * Login user
  * POST /api/auth/login
+ * 
+ * Security Features:
+ * - Rate limiting (applied at route level)
+ * - Account lockout after failed attempts
+ * - Secure password verification with bcrypt
+ * - Persistent refresh token storage
  */
 const login = async (req, res) => {
   try {
     const { username, password } = req.body;
 
-    // Validate input
     if (!username || !password) {
       return sendError(
         res,
@@ -52,15 +126,14 @@ const login = async (req, res) => {
       );
     }
 
-    // Query user from database
     const users = await query(
-      `SELECT id, username, email, password_hash, full_name, role, is_active
+      `SELECT id, username, email, password_hash, full_name, role, is_active, 
+              failed_login_attempts, locked_until
        FROM users
        WHERE username = ? AND is_active = TRUE`,
       [username]
     );
 
-    // Check if user exists
     if (!users || users.length === 0) {
       return sendError(
         res,
@@ -72,10 +145,20 @@ const login = async (req, res) => {
 
     const user = users[0];
 
-    // Verify password
+    if (isAccountLocked(user)) {
+      const remainingMinutes = getLockoutRemainingMinutes(user);
+      return sendError(
+        res,
+        'Account Locked',
+        `Too many failed login attempts. Please try again in ${remainingMinutes} minutes.`,
+        STATUS_CODES.LOCKED
+      );
+    }
+
     const isPasswordValid = await bcrypt.compare(password, user.password_hash);
 
     if (!isPasswordValid) {
+      await incrementFailedAttempts(user.id, user.failed_login_attempts);
       return sendError(
         res,
         'Authentication Failed',
@@ -84,18 +167,14 @@ const login = async (req, res) => {
       );
     }
 
-    // Update last login timestamp (optional - don't fail if column doesn't exist)
+    await resetFailedAttempts(user.id);
+
     try {
-      await query(
-        'UPDATE users SET last_login = NOW() WHERE id = ?',
-        [user.id]
-      );
+      await query('UPDATE users SET last_login = NOW() WHERE id = ?', [user.id]);
     } catch (updateErr) {
-      // Silently ignore last_login update errors
       console.log('Note: Could not update last_login timestamp');
     }
 
-    // Create token payload
     const tokenPayload = {
       userId: user.id,
       username: user.username,
@@ -104,14 +183,12 @@ const login = async (req, res) => {
       fullName: user.full_name
     };
 
-    // Generate tokens
     const accessToken = generateAccessToken(tokenPayload);
     const refreshToken = generateRefreshToken({ userId: user.id });
 
-    // Store refresh token
-    refreshTokens.add(refreshToken);
+    const expiresInMs = 7 * 24 * 60 * 60 * 1000;
+    await storeRefreshToken(user.id, refreshToken, expiresInMs);
 
-    // Prepare user data (exclude sensitive info)
     const userData = {
       id: user.id,
       username: user.username,
@@ -149,9 +226,8 @@ const logout = async (req, res) => {
   try {
     const { refreshToken } = req.body;
 
-    // Remove refresh token from store
     if (refreshToken) {
-      refreshTokens.delete(refreshToken);
+      await revokeRefreshToken(refreshToken);
     }
 
     return sendSuccess(
@@ -179,7 +255,6 @@ const refresh = async (req, res) => {
   try {
     const { refreshToken } = req.body;
 
-    // Validate input
     if (!refreshToken) {
       return sendError(
         res,
@@ -189,23 +264,11 @@ const refresh = async (req, res) => {
       );
     }
 
-    // Check if refresh token exists in store
-    if (!refreshTokens.has(refreshToken)) {
-      return sendError(
-        res,
-        'Authentication Failed',
-        'Invalid or expired refresh token',
-        STATUS_CODES.UNAUTHORIZED
-      );
-    }
-
-    // Verify refresh token
     let decoded;
     try {
-      decoded = jwt.verify(refreshToken, JWT_SECRET);
+      decoded = jwt.verify(refreshToken, authConfig.JWT_SECRET);
     } catch (err) {
-      // Remove invalid token from store
-      refreshTokens.delete(refreshToken);
+      await revokeRefreshToken(refreshToken);
       return sendError(
         res,
         'Authentication Failed',
@@ -214,36 +277,35 @@ const refresh = async (req, res) => {
       );
     }
 
-    // Get user from database
-    const users = await query(
-      `SELECT id, username, email, full_name, role, is_active 
-       FROM users 
-       WHERE id = ? AND is_active = TRUE`,
-      [decoded.userId]
-    );
+    const storedToken = await validateRefreshToken(refreshToken);
 
-    if (!users || users.length === 0) {
-      refreshTokens.delete(refreshToken);
+    if (!storedToken) {
       return sendError(
         res,
         'Authentication Failed',
-        'User not found or inactive',
+        'Invalid or expired refresh token',
         STATUS_CODES.UNAUTHORIZED
       );
     }
 
-    const user = users[0];
+    if (!storedToken.is_active) {
+      await revokeRefreshToken(refreshToken);
+      return sendError(
+        res,
+        'Authentication Failed',
+        'User account is inactive',
+        STATUS_CODES.UNAUTHORIZED
+      );
+    }
 
-    // Create new token payload
     const tokenPayload = {
-      userId: user.id,
-      username: user.username,
-      email: user.email,
-      role: user.role,
-      fullName: user.full_name
+      userId: storedToken.user_id,
+      username: storedToken.username,
+      email: storedToken.email,
+      role: storedToken.role,
+      fullName: storedToken.full_name
     };
 
-    // Generate new access token
     const newAccessToken = generateAccessToken(tokenPayload);
 
     return sendSuccess(
@@ -273,7 +335,6 @@ const getMe = async (req, res) => {
   try {
     const userId = req.user.userId;
 
-    // Get user from database
     const users = await query(
       `SELECT id, username, email, full_name, role, is_active, last_login, created_at 
        FROM users 
@@ -292,7 +353,6 @@ const getMe = async (req, res) => {
 
     const user = users[0];
 
-    // Prepare user data
     const userData = {
       id: user.id,
       username: user.username,
@@ -322,15 +382,19 @@ const getMe = async (req, res) => {
 };
 
 /**
- * Change password (optional helper)
+ * Change password
  * POST /api/auth/change-password
+ * 
+ * Security Features:
+ * - Strong password validation (12+ chars, complexity requirements)
+ * - Common password detection
+ * - Password strength calculation
  */
 const changePassword = async (req, res) => {
   try {
     const userId = req.user.userId;
     const { currentPassword, newPassword } = req.body;
 
-    // Validate input
     if (!currentPassword || !newPassword) {
       return sendError(
         res,
@@ -340,19 +404,18 @@ const changePassword = async (req, res) => {
       );
     }
 
-    // Validate new password length
-    if (newPassword.length < 8) {
+    const passwordError = validatePasswordStrength(newPassword);
+    if (passwordError) {
       return sendError(
         res,
         'Validation Error',
-        'New password must be at least 8 characters long',
+        passwordError,
         STATUS_CODES.BAD_REQUEST
       );
     }
 
-    // Get user's current password hash
     const users = await query(
-      'SELECT password_hash FROM users WHERE id = ? AND is_active = TRUE',
+      'SELECT username, email, password_hash FROM users WHERE id = ? AND is_active = TRUE',
       [userId]
     );
 
@@ -365,7 +428,8 @@ const changePassword = async (req, res) => {
       );
     }
 
-    // Verify current password
+    const user = users[0];
+
     const isPasswordValid = await bcrypt.compare(currentPassword, users[0].password_hash);
 
     if (!isPasswordValid) {
@@ -377,20 +441,30 @@ const changePassword = async (req, res) => {
       );
     }
 
-    // Hash new password
-    const saltRounds = 10;
+    const passwordStrength = calculatePasswordStrength(newPassword);
+    if (passwordStrength === 'weak') {
+      return sendError(
+        res,
+        'Validation Error',
+        'Password strength is weak. Please choose a stronger password.',
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    const saltRounds = authConfig.BCRYPT_ROUNDS;
     const newPasswordHash = await bcrypt.hash(newPassword, saltRounds);
 
-    // Update password
     await query(
       'UPDATE users SET password_hash = ? WHERE id = ?',
       [newPasswordHash, userId]
     );
 
+    await revokeAllUserTokens(userId);
+
     return sendSuccess(
       res,
-      null,
-      'Password changed successfully',
+      { strength: passwordStrength },
+      'Password changed successfully. Please login again.',
       STATUS_CODES.OK
     );
   } catch (error) {

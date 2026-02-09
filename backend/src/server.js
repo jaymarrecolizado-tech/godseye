@@ -5,6 +5,7 @@
 
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 const dotenv = require('dotenv');
 const path = require('path');
 const { createServer } = require('http');
@@ -29,6 +30,8 @@ const notificationRoutes = require('./routes/notifications');
 
 // Import middleware
 const { authenticateToken } = require('./middleware/auth');
+const { securityLogger } = require('./middleware/securityLogger');
+const { sanitizeMiddleware } = require('./utils/sanitize');
 
 // Initialize Express app
 const app = express();
@@ -51,19 +54,45 @@ app.set('io', io);
 // MIDDLEWARE
 // ============================================
 
+// Security headers via Helmet.js
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'"],
+      imgSrc: ["'self'", "data:", "https:"],
+      fontSrc: ["'self'"],
+      connectSrc: ["'self'", process.env.CORS_ORIGIN || "http://localhost:3000"],
+    },
+  },
+  hsts: {
+    maxAge: 31536000,
+    includeSubDomains: true,
+    preload: process.env.NODE_ENV === 'production'
+  },
+  crossOriginEmbedderPolicy: false
+}));
+
 // CORS configuration
 app.use(cors({
   origin: process.env.CORS_ORIGIN || "http://localhost:3000",
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-CSRF-Token']
 }));
 
 // Parse JSON request body
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '1mb' }));
 
 // Parse URL-encoded request body
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+
+// Input sanitization (XSS prevention)
+app.use(sanitizeMiddleware);
+
+// Security event logging
+app.use(securityLogger);
 
 // Serve static files (uploads)
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
@@ -191,11 +220,22 @@ app.use((err, req, res, next) => {
 
   // MySQL error handling
   if (err.code && err.code.startsWith('ER_')) {
+    // Log error code only (not SQL details)
+    console.error('Database error:', err.code);
+
+    // Generic error message to client (no internal structure exposure)
+    const errorMap = {
+      'ER_DUP_ENTRY': 'A record with this information already exists',
+      'ER_NO_REFERENCED_ROW_2': 'Referenced record not found',
+      'ER_BAD_NULL_ERROR': 'Required field is missing',
+      'ER_DATA_TOO_LONG': 'Data exceeds maximum length',
+      'ER_DUP_KEY': 'A record with this information already exists'
+    };
+
     return res.status(400).json({
       success: false,
       error: 'Database Error',
-      message: err.sqlMessage || 'A database error occurred',
-      code: err.code
+      message: errorMap[err.code] || 'An error occurred while processing your request'
     });
   }
 
@@ -203,8 +243,7 @@ app.use((err, req, res, next) => {
   res.status(err.status || 500).json({
     success: false,
     error: err.name || 'Internal Server Error',
-    message: err.message || 'An unexpected error occurred',
-    ...(process.env.NODE_ENV !== 'production' && { stack: err.stack })
+    message: err.message || 'An unexpected error occurred'
   });
 });
 
@@ -230,9 +269,12 @@ httpServer.listen(PORT, () => {
   console.log('='.repeat(60));
   console.log(`Server running on port: ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`CORS Origin: ${process.env.CORS_ORIGIN || 'http://localhost:3000'}`);
-  console.log(`Database: ${process.env.DB_HOST || 'localhost'}:${process.env.DB_PORT || 3306}/${process.env.DB_NAME || 'project_tracking'}`);
   console.log('='.repeat(60));
 });
+
+// Configure server timeouts (prevent slow Loris attacks)
+httpServer.setTimeout(120000); // 2 minute timeout for requests
+httpServer.keepAliveTimeout = 65000;
+httpServer.headersTimeout = 66000;
 
 module.exports = { app, io };

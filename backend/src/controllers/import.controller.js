@@ -4,14 +4,21 @@
  */
 
 const path = require('path');
+const fs = require('fs');
+const csv = require('csv-parser');
 const { query } = require('../config/database');
 const { success, STATUS_CODES } = require('../utils/response');
 const { deleteUploadedFile } = require('../middleware/upload');
 const {
   parseCSV,
   validateHeaders,
+  validateRow,
   processCSVFile,
-  generateErrorReport
+  generateErrorReport,
+  detectDuplicates,
+  resolveConflicts,
+  REQUIRED_COLUMNS,
+  VALID_STATUSES
 } = require('../services/csvProcessor');
 const notificationService = require('../services/notificationService');
 
@@ -77,10 +84,20 @@ exports.uploadCSV = async (req, res, next) => {
     const importId = insertResult.insertId;
 
     // Get processing options from request
+    let conflictsResolution = null;
+    if (req.body.conflictsResolution) {
+      try {
+        conflictsResolution = JSON.parse(req.body.conflictsResolution);
+      } catch (e) {
+        console.error('Error parsing conflictsResolution:', e);
+      }
+    }
+
     const options = {
       skipDuplicates: req.body.skipDuplicates !== 'false',
       updateExisting: req.body.updateExisting === 'true',
-      userId: userId
+      userId: userId,
+      conflictsResolution: conflictsResolution
     };
 
     // Start processing asynchronously (don't await)
@@ -269,8 +286,15 @@ exports.downloadErrorReport = async (req, res, next) => {
     // Generate error report CSV
     const csvContent = generateErrorReport(errors);
 
+    // Sanitize filename to prevent CSV injection
+    const sanitizeFilename = (filename) => {
+      return filename
+        .replace(/^[=+\-@]/g, '_')
+        .replace(/[^a-zA-Z0-9_-]/g, '_');
+    };
+
     // Set headers for file download
-    const originalName = importRecord.original_filename.replace('.csv', '');
+    const originalName = sanitizeFilename(importRecord.original_filename.replace('.csv', ''));
     const downloadFilename = `${originalName}_errors.csv`;
 
     res.setHeader('Content-Type', 'text/csv');
@@ -460,8 +484,6 @@ exports.validateCSV = async (req, res, next) => {
 
     // Validate each row (first 100 rows only for quick validation)
     const rowValidationErrors = [];
-    const fs = require('fs');
-    const csv = require('csv-parser');
     
     await new Promise((resolve, reject) => {
       let rowNumber = 0;
@@ -504,6 +526,94 @@ exports.validateCSV = async (req, res, next) => {
       message: isValid
         ? 'CSV validation passed'
         : 'CSV validation failed'
+    }));
+
+  } catch (error) {
+    // Clean up uploaded file on error
+    if (req.file) {
+      deleteUploadedFile(req.file.filename);
+    }
+    next(error);
+  }
+};
+
+/**
+ * Detect duplicates in CSV file without importing
+ * @param {Request} req - Express request object
+ * @param {Response} res - Express response object
+ * @param {NextFunction} next - Express next middleware function
+ */
+exports.detectDuplicates = async (req, res, next) => {
+  try {
+    // Check if file was uploaded
+    if (!req.file) {
+      return res.status(STATUS_CODES.BAD_REQUEST).json({
+        success: false,
+        error: 'No File',
+        message: 'Please upload a CSV file'
+      });
+    }
+
+    const filePath = req.file.path;
+    const storedFilename = req.file.filename;
+
+    // Parse CSV to get headers and validate
+    let headers;
+    try {
+      const parseResult = await parseCSV(filePath);
+      headers = parseResult.headers;
+    } catch (parseError) {
+      // Delete uploaded file on parse error
+      deleteUploadedFile(storedFilename);
+      return res.status(STATUS_CODES.BAD_REQUEST).json({
+        success: false,
+        error: 'Parse Error',
+        message: 'Failed to parse CSV file. Please ensure it is a valid CSV format.',
+        details: parseError.message
+      });
+    }
+
+    // Validate headers
+    const headerValidation = validateHeaders(headers);
+    if (!headerValidation.valid) {
+      // Delete uploaded file on validation error
+      deleteUploadedFile(storedFilename);
+      return res.status(STATUS_CODES.BAD_REQUEST).json({
+        success: false,
+        error: 'Invalid Headers',
+        message: headerValidation.error
+      });
+    }
+
+    // Parse all rows
+    const rows = [];
+    await new Promise((resolve, reject) => {
+      fs.createReadStream(filePath)
+        .pipe(csv())
+        .on('data', (row) => {
+          rows.push(row);
+        })
+        .on('end', resolve)
+        .on('error', reject);
+    });
+
+    // Delete uploaded file after detection
+    deleteUploadedFile(storedFilename);
+
+    // Detect duplicates
+    const detectionResults = await detectDuplicates(rows);
+
+    res.json(success({
+      data: {
+        totalRows: detectionResults.totalRows,
+        conflictCount: detectionResults.conflictCount,
+        newEntryCount: detectionResults.newEntryCount,
+        conflicts: detectionResults.conflicts,
+        newEntries: detectionResults.newEntries
+      },
+      message: detectionResults.conflictCount > 0
+        ? `Found ${detectionResults.conflictCount} potential conflicts`
+        : 'No conflicts detected - all entries are new'
     }));
 
   } catch (error) {

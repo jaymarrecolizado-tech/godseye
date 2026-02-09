@@ -51,12 +51,12 @@ exports.getAuditLogs = async (req, res, next) => {
 
     // Filter by date range
     if (date_from) {
-      conditions.push('al.created_at >= ?');
+      conditions.push('al.timestamp >= ?');
       params.push(date_from);
     }
 
     if (date_to) {
-      conditions.push('al.created_at <= ?');
+      conditions.push('al.timestamp <= ?');
       // Add time to include the full end date
       const endDate = new Date(date_to);
       endDate.setHours(23, 59, 59, 999);
@@ -87,11 +87,11 @@ exports.getAuditLogs = async (req, res, next) => {
         u.username as user_username,
         u.full_name as user_full_name,
         al.ip_address,
-        al.created_at as timestamp
+        al.timestamp
       FROM audit_logs al
       LEFT JOIN users u ON al.user_id = u.id
       ${whereClause}
-      ORDER BY al.created_at DESC
+      ORDER BY al.timestamp DESC
       LIMIT ${parseInt(limitNum)} OFFSET ${parseInt(offset)}
     `;
 
@@ -160,12 +160,12 @@ exports.getAuditStats = async (req, res, next) => {
     const params = [];
 
     if (date_from) {
-      conditions.push('created_at >= ?');
+      conditions.push('timestamp >= ?');
       params.push(date_from);
     }
 
     if (date_to) {
-      conditions.push('created_at <= ?');
+      conditions.push('timestamp <= ?');
       const endDate = new Date(date_to);
       endDate.setHours(23, 59, 59, 999);
       params.push(endDate.toISOString().slice(0, 19).replace('T', ' '));
@@ -245,7 +245,7 @@ exports.getAuditLogById = async (req, res, next) => {
         u.full_name as user_full_name,
         al.ip_address,
         al.user_agent,
-        al.created_at as timestamp
+        al.timestamp
       FROM audit_logs al
       LEFT JOIN users u ON al.user_id = u.id
       WHERE al.id = ?

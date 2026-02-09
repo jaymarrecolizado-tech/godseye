@@ -5,9 +5,7 @@
 
 const jwt = require('jsonwebtoken');
 const { sendError, STATUS_CODES, ERROR_MESSAGES } = require('../utils/response');
-
-// JWT Secret from environment variable
-const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-this-in-production';
+const authConfig = require('../config/auth');
 
 /**
  * Extract token from Authorization header
@@ -54,7 +52,7 @@ const authenticateToken = (req, res, next) => {
     }
 
     // Verify token
-    jwt.verify(token, JWT_SECRET, (err, decoded) => {
+    jwt.verify(token, authConfig.JWT_SECRET, (err, decoded) => {
       if (err) {
         // Handle specific JWT errors
         if (err.name === 'TokenExpiredError') {
@@ -172,7 +170,7 @@ const optionalAuth = (req, res, next) => {
     }
 
     // Verify token (ignore expiration for optional auth)
-    jwt.verify(token, JWT_SECRET, { ignoreExpiration: false }, (err, decoded) => {
+    jwt.verify(token, authConfig.JWT_SECRET, { ignoreExpiration: false }, (err, decoded) => {
       if (!err) {
         // Token is valid, set user
         req.user = decoded;

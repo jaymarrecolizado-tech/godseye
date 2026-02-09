@@ -155,6 +155,26 @@ export const projectsApi = {
     return apiClient.get(`/projects/${id}/history`)
   },
 
+  // Get project accomplishments
+  getProjectAccomplishments: (id) => {
+    return apiClient.get(`/projects/${id}/accomplishments`)
+  },
+
+  // Add project accomplishment
+  addProjectAccomplishment: (id, data) => {
+    return apiClient.post(`/projects/${id}/accomplishments`, data)
+  },
+
+  // Update project accomplishment
+  updateProjectAccomplishment: (id, accomplishmentId, data) => {
+    return apiClient.put(`/projects/${id}/accomplishments/${accomplishmentId}`, data)
+  },
+
+  // Delete project accomplishment
+  deleteProjectAccomplishment: (id, accomplishmentId) => {
+    return apiClient.delete(`/projects/${id}/accomplishments/${accomplishmentId}`)
+  },
+
   // Create new project
   createProject: (data) => {
     return apiClient.post('/projects', data)
@@ -207,6 +227,16 @@ export const geospatialApi = {
   // Get boundary data
   getBoundary: (type, id) => {
     return apiClient.get(`/boundary/${type}/${id}`)
+  },
+
+  // Get district bounds for zoom to district
+  getDistrictBounds: (districtId) => {
+    return apiClient.get(`/district-bounds/${districtId}`)
+  },
+
+  // Get projects in a specific district
+  getProjectsInDistrict: (districtId, params = {}) => {
+    return apiClient.get(`/district-projects/${districtId}`, { params })
   }
 }
 

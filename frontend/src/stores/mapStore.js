@@ -9,10 +9,13 @@ export const useMapStore = create((set, get) => ({
   visibleProjects: [],
   loading: false,
   error: null,
+  districtBounds: null,
   filters: {
     projectType: '',
     status: '',
-    province: ''
+    province: '',
+    municipality: '',
+    district: ''
   },
 
   // Actions
@@ -20,24 +23,81 @@ export const useMapStore = create((set, get) => ({
     set({ loading: true, error: null })
     try {
       const params = {
-        ...(filters.projectType && { project_type: filters.projectType }),
+        ...(filters.projectType && { project_type_id: filters.projectType }),
         ...(filters.status && { status: filters.status }),
-        ...(filters.province && { province_id: filters.province })
+        ...(filters.province && { province_id: filters.province }),
+        ...(filters.municipality && { municipality_id: filters.municipality }),
+        ...(filters.district && { district_id: filters.district })
       }
 
       const response = await api.getMapData(params)
       // Handle GeoJSON format - extract features array
       const features = response.data?.features || []
+      const bounds = response.data?.metadata?.bounds || null
+      
       set({
         markers: features,
         visibleProjects: features,
+        districtBounds: bounds,
         loading: false
       })
+      
+      return { features, bounds }
     } catch (error) {
       set({ 
         error: error.message || 'Failed to fetch map data', 
         loading: false 
       })
+      throw error
+    }
+  },
+
+  // Fetch district bounds
+  fetchDistrictBounds: async (districtId) => {
+    if (!districtId) {
+      set({ districtBounds: null })
+      return null
+    }
+    
+    try {
+      const response = await api.getDistrictBounds(districtId)
+      const bounds = response.data?.bounds || null
+      set({ districtBounds: bounds })
+      return bounds
+    } catch (error) {
+      console.error('Error fetching district bounds:', error)
+      set({ districtBounds: null })
+      return null
+    }
+  },
+
+  // Fetch projects in district
+  fetchProjectsInDistrict: async (districtId, filters = {}) => {
+    set({ loading: true, error: null })
+    try {
+      const params = {
+        ...(filters.status && { status: filters.status }),
+        ...(filters.projectType && { project_type_id: filters.projectType })
+      }
+
+      const response = await api.getProjectsInDistrict(districtId, params)
+      const features = response.data?.features || []
+      const bounds = response.data?.metadata?.bounds || null
+      
+      set({
+        markers: features,
+        visibleProjects: features,
+        districtBounds: bounds,
+        loading: false
+      })
+      
+      return { features, bounds }
+    } catch (error) {
+      set({ 
+        error: error.message || 'Failed to fetch district projects', 
+        loading: false 
+      })
+      throw error
     }
   },
 
@@ -83,7 +143,8 @@ export const useMapStore = create((set, get) => ({
       filters: { ...state.filters, ...newFilters }
     }))
     // Refresh map data with new filters
-    get().fetchMapData(get().filters)
+    const updatedFilters = { ...get().filters, ...newFilters }
+    get().fetchMapData(updatedFilters)
   },
 
   clearFilters: () => {
@@ -91,10 +152,17 @@ export const useMapStore = create((set, get) => ({
       filters: {
         projectType: '',
         status: '',
-        province: ''
-      }
+        province: '',
+        municipality: '',
+        district: ''
+      },
+      districtBounds: null
     })
     get().fetchMapData()
+  },
+
+  clearDistrictBounds: () => {
+    set({ districtBounds: null })
   },
 
   // Get markers grouped by project type

@@ -37,4 +37,19 @@ router.get('/clusters', geoController.getClusters);
 // ============================================
 router.get('/boundaries/:type/:id', geoController.getBoundary);
 
+// ============================================
+// GET DISTRICT BOUNDS (for zoom to district)
+// ============================================
+router.get('/district-bounds/:districtId', geoController.getDistrictBounds);
+
+// ============================================
+// GET PROJECTS IN DISTRICT
+// ============================================
+router.get('/district-projects/:districtId', geoController.getProjectsInDistrict);
+
+// ============================================
+// GET UNIQUE PROJECT TYPES (only types with projects)
+// ============================================
+router.get('/project-types', geoController.getUniqueProjectTypes);
+
 module.exports = router;

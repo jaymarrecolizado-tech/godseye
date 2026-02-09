@@ -7,6 +7,40 @@ const { query, buildPagination } = require('../config/database');
 const { success, paginated, STATUS_CODES } = require('../utils/response');
 
 /**
+ * Calculate bounding box from an array of coordinates
+ * @param {Array} coordinates - Array of [lng, lat] coordinates
+ * @returns {Object} Bounding box with north, south, east, west, center_lat, center_lng
+ */
+const calculateBounds = (coordinates) => {
+  if (!coordinates || coordinates.length === 0) {
+    return null;
+  }
+
+  let minLat = Infinity, maxLat = -Infinity;
+  let minLng = Infinity, maxLng = -Infinity;
+
+  coordinates.forEach(([lng, lat]) => {
+    if (lat < minLat) minLat = lat;
+    if (lat > maxLat) maxLat = lat;
+    if (lng < minLng) minLng = lng;
+    if (lng > maxLng) maxLng = lng;
+  });
+
+  // Add some padding (5%)
+  const latPadding = (maxLat - minLat) * 0.05;
+  const lngPadding = (maxLng - minLng) * 0.05;
+
+  return {
+    north: maxLat + latPadding,
+    south: minLat - latPadding,
+    east: maxLng + lngPadding,
+    west: minLng - lngPadding,
+    center_lat: (minLat + maxLat) / 2,
+    center_lng: (minLng + maxLng) / 2
+  };
+};
+
+/**
  * Get GeoJSON data for map display
  * @param {Request} req - Express request object
  * @param {Response} res - Express response object
@@ -19,6 +53,7 @@ exports.getMapData = async (req, res, next) => {
       project_type_id, 
       province_id, 
       municipality_id,
+      district_id,
       date_from,
       date_to
     } = req.query;
@@ -45,6 +80,11 @@ exports.getMapData = async (req, res, next) => {
     if (municipality_id) {
       conditions.push('ps.municipality_id = ?');
       params.push(municipality_id);
+    }
+    
+    if (district_id) {
+      conditions.push('m.district_id = ?');
+      params.push(district_id);
     }
     
     if (date_from) {
@@ -76,7 +116,8 @@ exports.getMapData = async (req, res, next) => {
         ps.remarks,
         p.name as province,
         m.name as municipality,
-        b.name as barangay
+        b.name as barangay,
+        m.district_id
       FROM project_sites ps
       JOIN project_types pt ON ps.project_type_id = pt.id
       JOIN provinces p ON ps.province_id = p.id
@@ -112,12 +153,27 @@ exports.getMapData = async (req, res, next) => {
       }
     }));
     
+    // Calculate bounds if projects exist
+    let bounds = null;
+    if (features.length > 0) {
+      const coordinates = features.map(f => f.geometry.coordinates);
+      bounds = calculateBounds(coordinates);
+    }
+    
     const geoJson = {
       type: 'FeatureCollection',
       features,
       metadata: {
         total: features.length,
-        generated_at: new Date().toISOString()
+        generated_at: new Date().toISOString(),
+        bounds,
+        filters: {
+          status,
+          project_type_id,
+          province_id,
+          municipality_id,
+          district_id
+        }
       }
     };
     
@@ -460,6 +516,196 @@ exports.getBoundary = async (req, res, next) => {
     res.json(success({
       data: boundary,
       message: 'Boundary data retrieved successfully'
+    }));
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get district bounds (bounding box) based on projects in that district
+ * @param {Request} req - Express request object
+ * @param {Response} res - Express response object
+ * @param {NextFunction} next - Express next middleware function
+ */
+exports.getDistrictBounds = async (req, res, next) => {
+  try {
+    const { districtId } = req.params;
+
+    // Get all projects in the district
+    const sql = `
+      SELECT 
+        ps.latitude,
+        ps.longitude
+      FROM project_sites ps
+      JOIN municipalities m ON ps.municipality_id = m.id
+      WHERE m.district_id = ?
+        AND ps.latitude IS NOT NULL 
+        AND ps.longitude IS NOT NULL
+    `;
+
+    const projects = await query(sql, [districtId]);
+
+    if (projects.length === 0) {
+      return res.status(STATUS_CODES.NOT_FOUND).json({
+        success: false,
+        error: 'Not Found',
+        message: 'No projects found in the specified district'
+      });
+    }
+
+    // Calculate bounds
+    const coordinates = projects.map(p => [parseFloat(p.longitude), parseFloat(p.latitude)]);
+    const bounds = calculateBounds(coordinates);
+
+    // Get district info
+    const [districtInfo] = await query(`
+      SELECT d.id, d.name, d.district_code, p.name as province_name
+      FROM districts d
+      JOIN provinces p ON d.province_id = p.id
+      WHERE d.id = ?
+    `, [districtId]);
+
+    res.json(success({
+      data: {
+        district: districtInfo,
+        bounds,
+        project_count: projects.length
+      },
+      message: 'District bounds retrieved successfully'
+    }));
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get unique project types that have projects in the database
+ * @param {Request} req - Express request object
+ * @param {Response} res - Express response object
+ * @param {NextFunction} next - Express next middleware function
+ */
+exports.getUniqueProjectTypes = async (req, res, next) => {
+  try {
+    const sql = `
+      SELECT DISTINCT pt.id, pt.name, pt.code_prefix, pt.color_code
+      FROM project_types pt
+      INNER JOIN project_sites ps ON pt.id = ps.project_type_id
+      ORDER BY pt.name
+    `;
+
+    const projectTypes = await query(sql);
+
+    res.json(success({
+      data: projectTypes,
+      message: 'Unique project types retrieved successfully'
+    }));
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get projects within a district with optional filters
+ * @param {Request} req - Express request object
+ * @param {Response} res - Express response object
+ * @param {NextFunction} next - Express next middleware function
+ */
+exports.getProjectsInDistrict = async (req, res, next) => {
+  try {
+    const { districtId } = req.params;
+    const { status, project_type_id } = req.query;
+
+    // Build conditions
+    const conditions = ['m.district_id = ?'];
+    const params = [districtId];
+
+    if (status) {
+      conditions.push('ps.status = ?');
+      params.push(status);
+    }
+
+    if (project_type_id) {
+      conditions.push('ps.project_type_id = ?');
+      params.push(project_type_id);
+    }
+
+    const whereClause = `WHERE ${conditions.join(' AND ')}`;
+
+    const sql = `
+      SELECT 
+        ps.id,
+        ps.site_code,
+        ps.site_name,
+        ps.project_type_id,
+        pt.name as project_type,
+        pt.code_prefix,
+        pt.color_code,
+        ps.status,
+        ps.activation_date,
+        ps.latitude,
+        ps.longitude,
+        ps.remarks,
+        p.name as province,
+        m.name as municipality,
+        b.name as barangay
+      FROM project_sites ps
+      JOIN project_types pt ON ps.project_type_id = pt.id
+      JOIN provinces p ON ps.province_id = p.id
+      JOIN municipalities m ON ps.municipality_id = m.id
+      LEFT JOIN barangays b ON ps.barangay_id = b.id
+      ${whereClause}
+      ORDER BY ps.site_name
+    `;
+
+    const projects = await query(sql, params);
+
+    // Convert to GeoJSON
+    const features = projects.map(project => ({
+      type: 'Feature',
+      geometry: {
+        type: 'Point',
+        coordinates: [parseFloat(project.longitude), parseFloat(project.latitude)]
+      },
+      properties: {
+        id: project.id,
+        site_code: project.site_code,
+        site_name: project.site_name,
+        project_type: project.project_type,
+        project_type_id: project.project_type_id,
+        code_prefix: project.code_prefix,
+        color_code: project.color_code,
+        status: project.status,
+        activation_date: project.activation_date,
+        province: project.province,
+        municipality: project.municipality,
+        barangay: project.barangay,
+        remarks: project.remarks
+      }
+    }));
+
+    // Calculate bounds
+    let bounds = null;
+    if (features.length > 0) {
+      const coordinates = features.map(f => f.geometry.coordinates);
+      bounds = calculateBounds(coordinates);
+    }
+
+    const geoJson = {
+      type: 'FeatureCollection',
+      features,
+      metadata: {
+        total: features.length,
+        bounds,
+        district_id: parseInt(districtId),
+        filters: { status, project_type_id },
+        generated_at: new Date().toISOString()
+      }
+    };
+
+    res.json(success({
+      data: geoJson,
+      message: `Found ${features.length} projects in district`
     }));
   } catch (error) {
     next(error);

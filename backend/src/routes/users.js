@@ -13,10 +13,25 @@ const userController = require('../controllers/user.controller');
 // Import middleware
 const { authenticateToken, requireRole } = require('../middleware/auth');
 const { handleValidationErrors } = require('../middleware/validation');
+const { csrfProtection } = require('../middleware/csrf');
+const rateLimit = require('express-rate-limit');
 
 // All routes require authentication and Admin role
 router.use(authenticateToken);
 router.use(requireRole('Admin'));
+
+// Create stricter rate limiter for user management operations
+const userRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  message: {
+    success: false,
+    error: 'Too Many Requests',
+    message: 'Too many user management operations. Please try again later.'
+  },
+  standardHeaders: true,
+  legacyHeaders: false
+});
 
 /**
  * @route   GET /api/users
@@ -51,7 +66,7 @@ router.get('/:id', userController.getUserById);
  * @body    { username: string, email: string, fullName: string, role: string, isActive: boolean }
  * @returns { user: object }
  */
-router.post('/', [
+router.post('/', userRateLimiter, csrfProtection, [
   // Validation rules
   body('username')
     .trim()
@@ -61,7 +76,7 @@ router.post('/', [
     .withMessage('Username must be between 3 and 50 characters')
     .matches(/^[a-zA-Z0-9_]+$/)
     .withMessage('Username can only contain letters, numbers, and underscores'),
-
+ 
   body('email')
     .trim()
     .notEmpty()
@@ -69,29 +84,38 @@ router.post('/', [
     .isEmail()
     .withMessage('Please provide a valid email address')
     .normalizeEmail(),
-
+ 
   body('fullName')
     .trim()
     .notEmpty()
     .withMessage('Full name is required')
     .isLength({ min: 2, max: 100 })
     .withMessage('Full name must be between 2 and 100 characters'),
-
+ 
   body('role')
     .trim()
     .notEmpty()
     .withMessage('Role is required')
     .isIn(['Admin', 'Manager', 'Editor', 'Viewer'])
     .withMessage('Role must be one of: Admin, Manager, Editor, Viewer'),
-
+ 
   body('isActive')
     .optional()
     .isBoolean()
     .withMessage('isActive must be a boolean value'),
-
+ 
   // Handle validation errors
   handleValidationErrors
 ], userController.createUser);
+
+/**
+ * @route   GET /api/users/:id
+ * @desc    Get user by ID
+ * @access  Admin or self
+ * @params  { id }
+ * @returns { user: object }
+ */
+router.get('/:id', userController.getUserById);
 
 /**
  * @route   PUT /api/users/:id
@@ -101,7 +125,7 @@ router.post('/', [
  * @body    { email: string, fullName: string }
  * @returns { user: object }
  */
-router.put('/:id', [
+router.put('/:id', userRateLimiter, csrfProtection, [
   // Validation rules
   body('email')
     .optional()
@@ -109,13 +133,13 @@ router.put('/:id', [
     .isEmail()
     .withMessage('Please provide a valid email address')
     .normalizeEmail(),
-
+ 
   body('fullName')
     .optional()
     .trim()
     .isLength({ min: 2, max: 100 })
     .withMessage('Full name must be between 2 and 100 characters'),
-
+ 
   // Handle validation errors
   handleValidationErrors
 ], userController.updateUser);
@@ -128,7 +152,7 @@ router.put('/:id', [
  * @body    { role: string }
  * @returns { user: object }
  */
-router.put('/:id/role', [
+router.put('/:id/role', userRateLimiter, csrfProtection, [
   // Validation rules
   body('role')
     .trim()
@@ -136,7 +160,7 @@ router.put('/:id/role', [
     .withMessage('Role is required')
     .isIn(['Admin', 'Manager', 'Editor', 'Viewer'])
     .withMessage('Role must be one of: Admin, Manager, Editor, Viewer'),
-
+ 
   // Handle validation errors
   handleValidationErrors
 ], userController.updateUserRole);
@@ -149,14 +173,14 @@ router.put('/:id/role', [
  * @body    { isActive: boolean }
  * @returns { user: object }
  */
-router.put('/:id/status', [
+router.put('/:id/status', userRateLimiter, csrfProtection, [
   // Validation rules
   body('isActive')
     .notEmpty()
     .withMessage('isActive is required')
     .isBoolean()
     .withMessage('isActive must be a boolean value'),
-
+ 
   // Handle validation errors
   handleValidationErrors
 ], userController.updateUserStatus);
@@ -168,7 +192,7 @@ router.put('/:id/status', [
  * @params  { id }
  * @returns { message: string }
  */
-router.delete('/:id', userController.deleteUser);
+router.delete('/:id', userRateLimiter, csrfProtection, userController.deleteUser);
 
 /**
  * @route   POST /api/users/:id/reset-password
@@ -177,6 +201,6 @@ router.delete('/:id', userController.deleteUser);
  * @params  { id }
  * @returns { message: string, newPassword: string }
  */
-router.post('/:id/reset-password', userController.resetPassword);
+router.post('/:id/reset-password', userRateLimiter, csrfProtection, userController.resetPassword);
 
 module.exports = router;

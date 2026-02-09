@@ -342,6 +342,268 @@ async function checkDuplicate(siteCode) {
 }
 
 /**
+ * Check for potential duplicates by site_name + municipality + province combination
+ * @param {string} siteName - Site name to check
+ * @param {number} municipalityId - Municipality ID
+ * @param {number} provinceId - Province ID
+ * @returns {Promise<Object|null>} Existing project or null
+ */
+async function checkPotentialDuplicate(siteName, municipalityId, provinceId) {
+  if (!siteName || !municipalityId || !provinceId) {
+    return null;
+  }
+
+  const [existing] = await query(
+    `SELECT ps.id, ps.site_code, ps.site_name, ps.status, ps.updated_at,
+            p.name as province_name, m.name as municipality_name
+     FROM project_sites ps
+     LEFT JOIN provinces p ON ps.province_id = p.id
+     LEFT JOIN municipalities m ON ps.municipality_id = m.id
+     WHERE ps.site_name = ? AND ps.municipality_id = ? AND ps.province_id = ?
+     LIMIT 1`,
+    [siteName.trim(), municipalityId, provinceId]
+  );
+  return existing || null;
+}
+
+/**
+ * Detect duplicates and conflicts in CSV data
+ * @param {Array} rows - Parsed CSV rows
+ * @returns {Promise<Object>} Detection results with conflicts array
+ */
+async function detectDuplicates(rows) {
+  const conflicts = [];
+  const newEntries = [];
+  const processedSiteCodes = new Set(); // Track duplicates within the CSV itself
+
+  await loadReferenceCache();
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const rowNumber = i + 1;
+    const siteCode = row['Site Code']?.trim();
+    const siteName = row['Site Name']?.trim();
+    
+    // Get foreign key IDs for location lookup
+    const provinceName = row['Province']?.trim().toLowerCase();
+    const municipalityName = row['Municipality']?.trim().toLowerCase();
+    const provinceId = referenceCache.provinces[provinceName];
+    let municipalityId = null;
+    
+    if (municipalityName && provinceId) {
+      const keyWithProvince = `${municipalityName}_${provinceId}`;
+      municipalityId = referenceCache.municipalities[keyWithProvince] || 
+                       referenceCache.municipalities[municipalityName];
+    }
+
+    const incoming = {
+      site_code: siteCode,
+      site_name: siteName,
+      project_name: row['Project Name']?.trim(),
+      province: row['Province']?.trim(),
+      municipality: row['Municipality']?.trim(),
+      barangay: row['Barangay']?.trim(),
+      district: row['District']?.trim(),
+      latitude: row['Latitude'],
+      longitude: row['Longitude'],
+      activation_date: row['Date of Activation'],
+      status: row['Status']?.trim()
+    };
+
+    // Check for exact match by site_code
+    const exactMatch = siteCode ? await checkDuplicate(siteCode) : null;
+    
+    if (exactMatch) {
+      // Get full existing project details
+      const [existingDetails] = await query(
+        `SELECT ps.*, pt.name as project_type_name, p.name as province_name,
+                m.name as municipality_name, b.name as barangay_name, d.name as district_name
+         FROM project_sites ps
+         LEFT JOIN project_types pt ON ps.project_type_id = pt.id
+         LEFT JOIN provinces p ON ps.province_id = p.id
+         LEFT JOIN municipalities m ON ps.municipality_id = m.id
+         LEFT JOIN barangays b ON ps.barangay_id = b.id
+         LEFT JOIN districts d ON ps.district_id = d.id
+         WHERE ps.id = ?`,
+        [exactMatch.id]
+      );
+
+      const existing = {
+        id: existingDetails.id,
+        site_code: existingDetails.site_code,
+        site_name: existingDetails.site_name,
+        project_name: existingDetails.project_type_name,
+        province: existingDetails.province_name,
+        municipality: existingDetails.municipality_name,
+        barangay: existingDetails.barangay_name,
+        district: existingDetails.district_name,
+        latitude: existingDetails.latitude,
+        longitude: existingDetails.longitude,
+        activation_date: existingDetails.activation_date?.toISOString()?.split('T')[0],
+        status: existingDetails.status,
+        updated_at: existingDetails.updated_at?.toISOString()
+      };
+
+      // Find differences
+      const differences = [];
+      const fieldsToCompare = ['site_name', 'project_name', 'province', 'municipality', 
+                               'barangay', 'district', 'latitude', 'longitude', 
+                               'activation_date', 'status'];
+      
+      for (const field of fieldsToCompare) {
+        const existingValue = existing[field];
+        const incomingValue = incoming[field];
+        
+        // Normalize values for comparison
+        const normalizedExisting = existingValue?.toString().toLowerCase().trim() || '';
+        const normalizedIncoming = incomingValue?.toString().toLowerCase().trim() || '';
+        
+        if (normalizedExisting !== normalizedIncoming) {
+          differences.push(field);
+        }
+      }
+
+      conflicts.push({
+        rowIndex: rowNumber,
+        conflictType: 'exact',
+        existing,
+        incoming,
+        differences
+      });
+    } else if (siteName && municipalityId && provinceId) {
+      // Check for potential duplicate by name + location
+      const potentialMatch = await checkPotentialDuplicate(siteName, municipalityId, provinceId);
+      
+      if (potentialMatch) {
+        const [existingDetails] = await query(
+          `SELECT ps.*, pt.name as project_type_name, p.name as province_name,
+                  m.name as municipality_name, b.name as barangay_name, d.name as district_name
+           FROM project_sites ps
+           LEFT JOIN project_types pt ON ps.project_type_id = pt.id
+           LEFT JOIN provinces p ON ps.province_id = p.id
+           LEFT JOIN municipalities m ON ps.municipality_id = m.id
+           LEFT JOIN barangays b ON ps.barangay_id = b.id
+           LEFT JOIN districts d ON ps.district_id = d.id
+           WHERE ps.id = ?`,
+          [potentialMatch.id]
+        );
+
+        const existing = {
+          id: existingDetails.id,
+          site_code: existingDetails.site_code,
+          site_name: existingDetails.site_name,
+          project_name: existingDetails.project_type_name,
+          province: existingDetails.province_name,
+          municipality: existingDetails.municipality_name,
+          barangay: existingDetails.barangay_name,
+          district: existingDetails.district_name,
+          latitude: existingDetails.latitude,
+          longitude: existingDetails.longitude,
+          activation_date: existingDetails.activation_date?.toISOString()?.split('T')[0],
+          status: existingDetails.status,
+          updated_at: existingDetails.updated_at?.toISOString()
+        };
+
+        // Find differences
+        const differences = [];
+        const fieldsToCompare = ['site_name', 'project_name', 'province', 'municipality', 
+                                 'barangay', 'district', 'latitude', 'longitude', 
+                                 'activation_date', 'status'];
+        
+        for (const field of fieldsToCompare) {
+          const existingValue = existing[field];
+          const incomingValue = incoming[field];
+          
+          const normalizedExisting = existingValue?.toString().toLowerCase().trim() || '';
+          const normalizedIncoming = incomingValue?.toString().toLowerCase().trim() || '';
+          
+          if (normalizedExisting !== normalizedIncoming) {
+            differences.push(field);
+          }
+        }
+
+        conflicts.push({
+          rowIndex: rowNumber,
+          conflictType: 'potential',
+          existing,
+          incoming,
+          differences
+        });
+      } else {
+        newEntries.push({
+          rowIndex: rowNumber,
+          incoming
+        });
+      }
+    } else {
+      newEntries.push({
+        rowIndex: rowNumber,
+        incoming
+      });
+    }
+
+    // Track site codes to detect CSV-internal duplicates
+    if (siteCode) {
+      if (processedSiteCodes.has(siteCode)) {
+        // Find existing conflict and mark it
+        const existingConflict = conflicts.find(c => c.incoming.site_code === siteCode);
+        if (existingConflict) {
+          existingConflict.csvDuplicate = true;
+        }
+      }
+      processedSiteCodes.add(siteCode);
+    }
+  }
+
+  return {
+    totalRows: rows.length,
+    conflictCount: conflicts.length,
+    newEntryCount: newEntries.length,
+    conflicts,
+    newEntries
+  };
+}
+
+/**
+ * Resolve conflicts based on user decisions
+ * @param {Array} conflicts - Array of conflict objects
+ * @param {Array} resolutions - Array of user decisions { rowIndex, action }
+ * @returns {Object} Resolved conflicts separated by action
+ */
+function resolveConflicts(conflicts, resolutions) {
+  const resolutionMap = new Map();
+  
+  for (const resolution of resolutions) {
+    resolutionMap.set(resolution.rowIndex, resolution.action);
+  }
+
+  const toOverride = [];
+  const toSkip = [];
+  const unresolved = [];
+
+  for (const conflict of conflicts) {
+    const action = resolutionMap.get(conflict.rowIndex);
+    
+    if (action === 'override') {
+      toOverride.push(conflict);
+    } else if (action === 'skip') {
+      toSkip.push(conflict);
+    } else {
+      unresolved.push(conflict);
+    }
+  }
+
+  return {
+    toOverride,
+    toSkip,
+    unresolved,
+    overrideCount: toOverride.length,
+    skipCount: toSkip.length,
+    unresolvedCount: unresolved.length
+  };
+}
+
+/**
  * Process a single row and save to database
  * @param {Object} row - CSV row data
  * @param {number} rowNumber - Row number
@@ -349,7 +611,7 @@ async function checkDuplicate(siteCode) {
  * @returns {Promise<Object>} Processing result
  */
 async function processRow(row, rowNumber, options = {}) {
-  const { skipDuplicates = true, updateExisting = false, userId = null } = options;
+  const { skipDuplicates = true, updateExisting = false, userId = null, conflictsResolution = null } = options;
 
   try {
     // Validate row
@@ -380,6 +642,62 @@ async function processRow(row, rowNumber, options = {}) {
     const existing = await checkDuplicate(row['Site Code'].trim());
     
     if (existing) {
+      // Check if there's a conflict resolution for this row
+      const resolution = conflictsResolution?.find(r => r.rowIndex === rowNumber);
+      
+      if (resolution) {
+        if (resolution.action === 'skip') {
+          return {
+            success: true,
+            rowNumber,
+            siteCode: row['Site Code'],
+            action: 'skipped',
+            message: 'User chose to skip duplicate'
+          };
+        } else if (resolution.action === 'override') {
+          // Update existing record (override)
+          const updateData = {
+            site_name: row['Site Name'].trim(),
+            project_type_id: fkLookup.project_type_id,
+            barangay_id: fkLookup.barangay_id,
+            municipality_id: fkLookup.municipality_id,
+            province_id: fkLookup.province_id,
+            district_id: fkLookup.district_id,
+            latitude: parseFloat(row['Latitude']),
+            longitude: parseFloat(row['Longitude']),
+            activation_date: row['Date of Activation'],
+            status: row['Status'].trim(),
+            updated_by: userId
+          };
+
+          const updateFields = [];
+          const params = [];
+
+          for (const [key, value] of Object.entries(updateData)) {
+            if (value !== undefined && value !== null) {
+              updateFields.push(`${key} = ?`);
+              params.push(value);
+            }
+          }
+
+          params.push(existing.id);
+
+          await query(
+            `UPDATE project_sites SET ${updateFields.join(', ')} WHERE id = ?`,
+            params
+          );
+
+          return {
+            success: true,
+            rowNumber,
+            siteCode: row['Site Code'],
+            action: 'updated',
+            projectId: existing.id,
+            message: 'User chose to override existing record'
+          };
+        }
+      }
+
       if (skipDuplicates && !updateExisting) {
         return {
           success: true,
@@ -487,6 +805,12 @@ async function processRow(row, rowNumber, options = {}) {
  * @returns {Promise<Object>} Processing results
  */
 async function processCSVFile(filePath, importId, options = {}) {
+  const {
+    dryRun = false,
+    conflictsResolution = null,
+    userId = null
+  } = options;
+
   const results = {
     totalRows: 0,
     successCount: 0,
@@ -494,8 +818,38 @@ async function processCSVFile(filePath, importId, options = {}) {
     skippedCount: 0,
     createdCount: 0,
     updatedCount: 0,
-    errors: []
+    errors: [],
+    conflicts: [],
+    processedConflicts: {
+      override: 0,
+      skip: 0
+    }
   };
+
+  // If in dry run mode, just detect duplicates and return
+  if (dryRun) {
+    const rows = [];
+    await new Promise((resolve, reject) => {
+      fs.createReadStream(filePath)
+        .pipe(csv())
+        .on('data', (row) => {
+          rows.push(row);
+        })
+        .on('end', resolve)
+        .on('error', reject);
+    });
+
+    const detectionResults = await detectDuplicates(rows);
+    return {
+      ...results,
+      totalRows: detectionResults.totalRows,
+      conflicts: detectionResults.conflicts,
+      newEntries: detectionResults.newEntries,
+      conflictCount: detectionResults.conflictCount,
+      newEntryCount: detectionResults.newEntryCount,
+      dryRun: true
+    };
+  }
 
   let connection;
   
@@ -504,7 +858,6 @@ async function processCSVFile(filePath, importId, options = {}) {
     await connection.beginTransaction();
 
     // Set current user for audit triggers
-    const userId = options.userId || null;
     await connection.execute('SET @current_user_id = ?', [userId]);
 
     // Update import status to Processing
@@ -709,6 +1062,9 @@ module.exports = {
   geocodeAddress,
   lookupForeignKeys,
   checkDuplicate,
+  checkPotentialDuplicate,
+  detectDuplicates,
+  resolveConflicts,
   loadReferenceCache,
   COLUMN_MAPPING,
   REQUIRED_COLUMNS,

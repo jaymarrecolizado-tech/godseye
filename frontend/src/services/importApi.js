@@ -49,8 +49,28 @@ export const uploadCSV = async (file, options = {}) => {
   if (options.updateExisting !== undefined) {
     formData.append('updateExisting', options.updateExisting)
   }
+  if (options.conflictsResolution) {
+    formData.append('conflictsResolution', JSON.stringify(options.conflictsResolution))
+  }
 
   const response = await apiClient.post('/import/csv', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data'
+    }
+  })
+  return response.data
+}
+
+/**
+ * Detect duplicate projects in CSV file
+ * @param {File} file - CSV file to check
+ * @returns {Promise} Detection results with conflicts
+ */
+export const detectDuplicates = async (file) => {
+  const formData = new FormData()
+  formData.append('file', file)
+
+  const response = await apiClient.post('/import/detect-duplicates', formData, {
     headers: {
       'Content-Type': 'multipart/form-data'
     }
@@ -131,6 +151,7 @@ export const validateCSV = async (file) => {
 // Export all methods
 export const importApi = {
   uploadCSV,
+  detectDuplicates,
   getImportStatus,
   downloadErrorReport,
   getImportHistory,

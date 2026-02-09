@@ -1,20 +1,49 @@
 /**
  * Audit Logger Middleware
- * Automatically logs all CRUD operations to the audit_logs table
+ * Automatically logs all CRUD operations to audit_logs table
  * Non-blocking - failures don't affect main operations
  */
 
 const { query } = require('../config/database');
 
+// Valid entity types - whitelist to prevent SQL injection
+const VALID_ENTITIES = new Set([
+  'project_sites',
+  'users',
+  'csv_imports',
+  'reference_provinces',
+  'reference_municipalities',
+  'reference_brgys',
+  'reports'
+]);
+
 /**
- * Log a CREATE operation to the audit_logs table
+ * Validate entity type against whitelist
+ * @param {string} entity - Entity type to validate
+ * @returns {boolean} True if valid, false otherwise
+ */
+const isValidEntity = (entity) => {
+  if (!entity || typeof entity !== 'string') {
+    return false;
+  }
+  return VALID_ENTITIES.has(entity);
+};
+
+/**
+ * Log a CREATE operation to audit_logs table
  * @param {string} entity - Table/entity name (e.g., 'project_sites')
- * @param {number} recordId - ID of the created record
+ * @param {number} recordId - ID of created record
  * @param {Object} data - The data that was created
  * @param {Object} req - Express request object (for user info and request metadata)
  */
 const logCreate = async (entity, recordId, data, req) => {
   try {
+    // Validate entity type to prevent SQL injection
+    if (!isValidEntity(entity)) {
+      console.warn(`[AUDIT] Invalid entity type: ${entity}`);
+      return;
+    }
+
     const userId = req.user?.userId || null;
     const ipAddress = req.ip || req.connection?.remoteAddress || null;
     const userAgent = req.headers?.['user-agent'] || null;
@@ -22,7 +51,7 @@ const logCreate = async (entity, recordId, data, req) => {
     const sql = `
       INSERT INTO audit_logs 
         (user_id, table_name, record_id, action, old_values, new_values, ip_address, user_agent)
-      VALUES (?, ?, ?, 'CREATE', NULL, ?, ?, ?)
+       VALUES (?, ?, ?, 'CREATE', NULL, ?, ?, ?)
     `;
 
     await query(sql, [
@@ -42,20 +71,26 @@ const logCreate = async (entity, recordId, data, req) => {
 };
 
 /**
- * Log an UPDATE operation to the audit_logs table
+ * Log an UPDATE operation to audit_logs table
  * @param {string} entity - Table/entity name (e.g., 'project_sites')
- * @param {number} recordId - ID of the updated record
+ * @param {number} recordId - ID of updated record
  * @param {Object} oldData - The data before the update
  * @param {Object} newData - The data after the update
  * @param {Object} req - Express request object (for user info and request metadata)
  */
 const logUpdate = async (entity, recordId, oldData, newData, req) => {
   try {
+    // Validate entity type to prevent SQL injection
+    if (!isValidEntity(entity)) {
+      console.warn(`[AUDIT] Invalid entity type: ${entity}`);
+      return;
+    }
+
     const userId = req.user?.userId || null;
     const ipAddress = req.ip || req.connection?.remoteAddress || null;
     const userAgent = req.headers?.['user-agent'] || null;
 
-    // Calculate the actual changes
+    // Calculate actual changes
     const changes = {};
     for (const key of Object.keys(newData)) {
       if (oldData[key] !== newData[key]) {
@@ -75,7 +110,7 @@ const logUpdate = async (entity, recordId, oldData, newData, req) => {
     const sql = `
       INSERT INTO audit_logs 
         (user_id, table_name, record_id, action, old_values, new_values, ip_address, user_agent)
-      VALUES (?, ?, ?, 'UPDATE', ?, ?, ?, ?)
+       VALUES (?, ?, ?, 'UPDATE', ?, ?, ?, ?)
     `;
 
     await query(sql, [
@@ -96,14 +131,20 @@ const logUpdate = async (entity, recordId, oldData, newData, req) => {
 };
 
 /**
- * Log a DELETE operation to the audit_logs table
+ * Log a DELETE operation to audit_logs table
  * @param {string} entity - Table/entity name (e.g., 'project_sites')
- * @param {number} recordId - ID of the deleted record
+ * @param {number} recordId - ID of deleted record
  * @param {Object} data - The data that was deleted
  * @param {Object} req - Express request object (for user info and request metadata)
  */
 const logDelete = async (entity, recordId, data, req) => {
   try {
+    // Validate entity type to prevent SQL injection
+    if (!isValidEntity(entity)) {
+      console.warn(`[AUDIT] Invalid entity type: ${entity}`);
+      return;
+    }
+
     const userId = req.user?.userId || null;
     const ipAddress = req.ip || req.connection?.remoteAddress || null;
     const userAgent = req.headers?.['user-agent'] || null;
@@ -111,7 +152,7 @@ const logDelete = async (entity, recordId, data, req) => {
     const sql = `
       INSERT INTO audit_logs 
         (user_id, table_name, record_id, action, old_values, new_values, ip_address, user_agent)
-      VALUES (?, ?, ?, 'DELETE', ?, NULL, ?, ?)
+       VALUES (?, ?, ?, 'DELETE', ?, NULL, ?, ?)
     `;
 
     await query(sql, [
@@ -131,14 +172,20 @@ const logDelete = async (entity, recordId, data, req) => {
 };
 
 /**
- * Log an IMPORT operation to the audit_logs table
+ * Log an IMPORT operation to audit_logs table
  * @param {string} entity - Table/entity name (e.g., 'project_sites')
- * @param {number} importId - ID of the import record
+ * @param {number} importId - ID of import record
  * @param {Object} metadata - Import metadata (rows processed, success count, etc.)
  * @param {Object} req - Express request object (for user info and request metadata)
  */
 const logImport = async (entity, importId, metadata, req) => {
   try {
+    // Validate entity type to prevent SQL injection
+    if (!isValidEntity(entity)) {
+      console.warn(`[AUDIT] Invalid entity type: ${entity}`);
+      return;
+    }
+
     const userId = req.user?.userId || null;
     const ipAddress = req.ip || req.connection?.remoteAddress || null;
     const userAgent = req.headers?.['user-agent'] || null;
@@ -146,7 +193,7 @@ const logImport = async (entity, importId, metadata, req) => {
     const sql = `
       INSERT INTO audit_logs 
         (user_id, table_name, record_id, action, old_values, new_values, ip_address, user_agent)
-      VALUES (?, ?, ?, 'IMPORT', NULL, ?, ?, ?)
+       VALUES (?, ?, ?, 'IMPORT', NULL, ?, ?, ?)
     `;
 
     await query(sql, [
@@ -183,6 +230,12 @@ const auditMiddleware = (entityType, options = {}) => {
   const { ignoreFields = [] } = options;
 
   return async (req, res, next) => {
+    // Validate entity type to prevent SQL injection
+    if (!isValidEntity(entityType)) {
+      console.warn(`[AUDIT] Invalid entity type: ${entityType}`);
+      return next();
+    }
+
     // Store original methods
     const originalJson = res.json.bind(res);
     const recordId = req.params?.id;
@@ -278,6 +331,12 @@ const auditMiddleware = (entityType, options = {}) => {
  */
 const manualAuditLog = async (action, entity, recordId, oldValues, newValues, req) => {
   try {
+    // Validate entity type to prevent SQL injection
+    if (!isValidEntity(entity)) {
+      console.warn(`[AUDIT] Invalid entity type: ${entity}`);
+      return;
+    }
+
     const userId = req.user?.userId || null;
     const ipAddress = req.ip || req.connection?.remoteAddress || null;
     const userAgent = req.headers?.['user-agent'] || null;
@@ -285,7 +344,7 @@ const manualAuditLog = async (action, entity, recordId, oldValues, newValues, re
     const sql = `
       INSERT INTO audit_logs 
         (user_id, table_name, record_id, action, old_values, new_values, ip_address, user_agent)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     await query(sql, [

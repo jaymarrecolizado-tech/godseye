@@ -4,16 +4,14 @@
  */
 
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const { query } = require('../config/database');
 const { sendSuccess, sendError, STATUS_CODES, ERROR_MESSAGES } = require('../utils/response');
 const { manualAuditLog } = require('../middleware/auditLogger');
 const notificationService = require('../services/notificationService');
 
-// Valid roles in the system
+// Valid roles in system
 const VALID_ROLES = ['Admin', 'Manager', 'Editor', 'Viewer'];
-
-// Default password for new users (should be changed on first login)
-const DEFAULT_PASSWORD = 'Password123!';
 
 /**
  * Get all users with pagination and filters
@@ -240,9 +238,12 @@ const createUser = async (req, res) => {
       );
     }
 
-    // Hash default password
+    // Generate cryptographically secure random password
+    const tempPassword = crypto.randomBytes(24).toString('base64');
+
+    // Hash password
     const saltRounds = 10;
-    const passwordHash = await bcrypt.hash(DEFAULT_PASSWORD, saltRounds);
+    const passwordHash = await bcrypt.hash(tempPassword, saltRounds);
 
     // Insert user
     const result = await query(
@@ -298,8 +299,7 @@ const createUser = async (req, res) => {
         fullName: user.full_name,
         role: user.role,
         isActive: user.is_active === 1,
-        createdAt: user.created_at,
-        message: `User created successfully. Default password is: ${DEFAULT_PASSWORD}`
+        createdAt: user.created_at
       },
       'User created successfully',
       STATUS_CODES.CREATED
@@ -752,8 +752,8 @@ const resetPassword = async (req, res) => {
 
     const userData = existingUser[0];
 
-    // Generate new random password
-    const newPassword = Math.random().toString(36).slice(-10) + 'A1!';
+    // Generate cryptographically secure random password
+    const newPassword = crypto.randomBytes(24).toString('base64');
 
     // Hash new password
     const saltRounds = 10;
@@ -777,12 +777,8 @@ const resetPassword = async (req, res) => {
 
     return sendSuccess(
       res,
-      {
-        message: `Password reset successfully for user "${userData.username}"`,
-        newPassword: newPassword,
-        note: 'Please share this password securely with the user'
-      },
-      'Password reset successfully',
+      null,
+      `Password reset successfully for user "${userData.username}"`,
       STATUS_CODES.OK
     );
   } catch (error) {

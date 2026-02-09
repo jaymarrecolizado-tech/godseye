@@ -8,6 +8,8 @@ const router = express.Router();
 const importController = require('../controllers/import.controller');
 const { uploadCSV, handleUploadError } = require('../middleware/upload');
 const { authenticateToken, requireRole } = require('../middleware/auth');
+const { csrfProtection } = require('../middleware/csrf');
+const { uploadRateLimiter, apiRateLimiter } = require('../middleware/rateLimiter');
 
 // Apply authentication to all routes in this router
 router.use(authenticateToken);
@@ -29,12 +31,17 @@ router.get('/template', importController.downloadTemplate);
 // ============================================
 // POST /api/import/validate - Validate CSV without importing
 // ============================================
-router.post('/validate', uploadCSV, handleUploadError, importController.validateCSV);
+router.post('/validate', uploadRateLimiter, csrfProtection, uploadCSV, handleUploadError, importController.validateCSV);
+
+// ============================================
+// POST /api/import/detect-duplicates - Detect duplicate projects
+// ============================================
+router.post('/detect-duplicates', uploadRateLimiter, csrfProtection, uploadCSV, handleUploadError, importController.detectDuplicates);
 
 // ============================================
 // POST /api/import/csv - Upload CSV file
 // ============================================
-router.post('/csv', uploadCSV, handleUploadError, importController.uploadCSV);
+router.post('/csv', uploadRateLimiter, csrfProtection, uploadCSV, handleUploadError, importController.uploadCSV);
 
 // ============================================
 // GET /api/import/:id/status - Get import progress
@@ -49,6 +56,6 @@ router.get('/:id/download', importController.downloadErrorReport);
 // ============================================
 // DELETE /api/import/:id - Cancel/delete import
 // ============================================
-router.delete('/:id', importController.deleteImport);
+router.delete('/:id', apiRateLimiter, csrfProtection, importController.deleteImport);
 
 module.exports = router;
